@@ -150,6 +150,71 @@ button:hover {
   font-size: 12px;
 }
 
+.fonts-box {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px 8px;
+  min-width: 260px;
+}
+
+.fonts-box label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 128px;
+}
+
+.fonts-box select,
+.fonts-box input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.font-library-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.font-library-row input {
+  width: 120px;
+}
+
+.font-library-row button {
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.font-families-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 24px;
+}
+
+.font-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d8c7b3;
+  border-radius: 999px;
+  background: #fcf4ea;
+  color: #6d4930;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
 .inline-check {
   flex-direction: row !important;
   align-items: center;
@@ -277,7 +342,75 @@ button:hover {
 
 .controls {
   display: grid;
+  gap: 10px;
+}
+
+.control-group {
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fffdf8;
+  padding: 8px;
+}
+
+.control-group h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b5a49;
+}
+
+.control-group .control-item + .control-item {
+  margin-top: 6px;
+}
+
+.control-item textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+}
+
+.background-type-row {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.background-type-row .radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.background-preview {
+  border: 1px solid #d8c7b3;
+  border-radius: 6px;
+  height: 38px;
+  margin-top: 6px;
+}
+
+.font-loading-warning {
+  margin-top: 8px;
+  padding: 7px;
+  border: 1px solid #e2b592;
+  border-radius: 6px;
+  background: #fff5ec;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #6f3c1d;
+}
+
+.font-loading-warning button {
+  font-size: 11px;
+  padding: 5px 7px;
 }
 
 .inspector-section {
@@ -421,6 +554,11 @@ button:hover {
   }
 
   .libraries-box {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .fonts-box {
     width: 100%;
     flex-wrap: wrap;
   }

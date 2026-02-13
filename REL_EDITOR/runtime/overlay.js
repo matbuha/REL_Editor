@@ -6,10 +6,16 @@
 
   const TRACKED_STYLES = [
     "color",
+    "background",
     "background-color",
+    "background-image",
+    "font-family",
     "font-size",
     "font-weight",
     "line-height",
+    "letter-spacing",
+    "text-transform",
+    "text-decoration",
     "text-align",
     "padding-top",
     "padding-right",
@@ -79,6 +85,10 @@
       iconSet: "none",
       animateCss: false,
       bootstrapJs: false,
+    },
+    runtimeFonts: {
+      provider: "none",
+      families: [],
     },
   };
 
@@ -245,6 +255,12 @@
       return;
     }
 
+    if (message.type === "REL_SET_FONTS") {
+      const payload = message.payload || {};
+      applyRuntimeFonts(payload.runtimeFonts || {});
+      return;
+    }
+
     if (message.type === "REL_REQUEST_TREE") {
       postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
       return;
@@ -295,6 +311,7 @@
     state.elementsMap = payload.elementsMap || {};
     state.appliedAddedNodeIds.clear();
     applyRuntimeLibraries(payload.runtimeLibraries || state.runtimeLibraries);
+    applyRuntimeFonts(payload.runtimeFonts || state.runtimeFonts);
 
     const addedNodes = Array.isArray(payload.addedNodes) ? payload.addedNodes : [];
     for (const node of addedNodes) {
@@ -1300,6 +1317,97 @@
     }
 
     return assets;
+  }
+
+  function applyRuntimeFonts(rawFonts) {
+    const fonts = normalizeRuntimeFonts(rawFonts);
+    clearInjectedFonts();
+
+    if (fonts.provider !== "none") {
+      for (const family of fonts.families) {
+        const href = buildRuntimeFontHref(fonts.provider, family);
+        if (!href) {
+          continue;
+        }
+        if (hasAssetAlready("style", href)) {
+          continue;
+        }
+
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        link.dataset.relFont = fonts.provider;
+        link.dataset.relFontFamily = family;
+        link.dataset.relFontManaged = "1";
+        document.head.appendChild(link);
+      }
+    }
+
+    state.runtimeFonts = fonts;
+    postToEditor({ type: "REL_FONTS_APPLIED", payload: fonts });
+  }
+
+  function clearInjectedFonts() {
+    const nodes = document.querySelectorAll('[data-rel-font-managed="1"]');
+    for (const node of nodes) {
+      node.remove();
+    }
+  }
+
+  function buildRuntimeFontHref(provider, family) {
+    const cleanFamily = normalizeFontFamilyName(family);
+    if (!cleanFamily) {
+      return "";
+    }
+
+    const familyQuery = encodeURIComponent(cleanFamily).replace(/%20/g, "+");
+    if (provider === "google") {
+      return `https://fonts.googleapis.com/css2?family=${familyQuery}:wght@300;400;600;700&display=swap`;
+    }
+    if (provider === "bunny") {
+      return `https://fonts.bunny.net/css?family=${familyQuery}:300,400,600,700&display=swap`;
+    }
+    if (provider === "adobe-edge") {
+      return `https://use.edgefonts.net/${familyQuery}.css`;
+    }
+    return "";
+  }
+
+  function normalizeRuntimeFonts(value) {
+    const raw = value && typeof value === "object" ? value : {};
+    const provider = normalizeEnum(raw.provider, ["none", "google", "bunny", "adobe-edge"], "none");
+    return {
+      provider,
+      families: provider === "none" ? [] : normalizeFontFamilies(raw.families),
+    };
+  }
+
+  function normalizeFontFamilies(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const unique = [];
+    const seen = new Set();
+    for (const item of value) {
+      const normalized = normalizeFontFamilyName(item);
+      if (!normalized) {
+        continue;
+      }
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      unique.push(normalized);
+    }
+    return unique;
+  }
+
+  function normalizeFontFamilyName(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\s+/g, " ");
   }
 
   function normalizeRuntimeLibraries(value) {

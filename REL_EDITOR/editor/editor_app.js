@@ -1,29 +1,91 @@
 (function () {
-  const controlsSchema = [
-    { label: "color", property: "color", type: "text", placeholder: "#222222" },
-    { label: "background-color", property: "background-color", type: "text", placeholder: "#ffffff" },
-    { label: "font-size", property: "font-size", type: "text", placeholder: "16px" },
-    { label: "font-weight", property: "font-weight", type: "text", placeholder: "400" },
-    { label: "line-height", property: "line-height", type: "text", placeholder: "1.4" },
-    { label: "text-align", property: "text-align", type: "select", options: ["", "left", "center", "right", "justify"] },
-    { label: "padding-top", property: "padding-top", type: "text", placeholder: "0px" },
-    { label: "padding-right", property: "padding-right", type: "text", placeholder: "0px" },
-    { label: "padding-bottom", property: "padding-bottom", type: "text", placeholder: "0px" },
-    { label: "padding-left", property: "padding-left", type: "text", placeholder: "0px" },
-    { label: "margin-top", property: "margin-top", type: "text", placeholder: "0px" },
-    { label: "margin-right", property: "margin-right", type: "text", placeholder: "0px" },
-    { label: "margin-bottom", property: "margin-bottom", type: "text", placeholder: "0px" },
-    { label: "margin-left", property: "margin-left", type: "text", placeholder: "0px" },
-    { label: "border-radius", property: "border-radius", type: "text", placeholder: "0px" },
-    { label: "width", property: "width", type: "text", placeholder: "auto" },
-    { label: "height", property: "height", type: "text", placeholder: "auto" },
-    { label: "display", property: "display", type: "select", options: ["", "block", "inline-block", "flex", "none"] },
-    { label: "flex-direction", property: "flex-direction", type: "select", options: ["", "row", "column", "row-reverse", "column-reverse"] },
-    { label: "justify-content", property: "justify-content", type: "select", options: ["", "flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"] },
-    { label: "align-items", property: "align-items", type: "select", options: ["", "stretch", "flex-start", "center", "flex-end", "baseline"] },
-    { label: "gap", property: "gap", type: "text", placeholder: "0px" },
-    { label: "object-fit", property: "object-fit", type: "select", options: ["", "fill", "contain", "cover", "none", "scale-down"] },
+  const styleSectionsSchema = [
+    {
+      key: "layout",
+      title: "Layout",
+      controls: [
+        { label: "width", property: "width", type: "text", placeholder: "auto" },
+        { label: "height", property: "height", type: "text", placeholder: "auto" },
+        { label: "display", property: "display", type: "select", options: ["", "block", "inline-block", "inline", "flex", "grid", "none"] },
+        { label: "flex-direction", property: "flex-direction", type: "select", options: ["", "row", "column", "row-reverse", "column-reverse"] },
+        { label: "justify-content", property: "justify-content", type: "select", options: ["", "flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"] },
+        { label: "align-items", property: "align-items", type: "select", options: ["", "stretch", "flex-start", "center", "flex-end", "baseline"] },
+        { label: "object-fit", property: "object-fit", type: "select", options: ["", "fill", "contain", "cover", "none", "scale-down"] },
+      ],
+    },
+    {
+      key: "spacing",
+      title: "Spacing",
+      controls: [
+        { label: "padding-top", property: "padding-top", type: "text", placeholder: "0px" },
+        { label: "padding-right", property: "padding-right", type: "text", placeholder: "0px" },
+        { label: "padding-bottom", property: "padding-bottom", type: "text", placeholder: "0px" },
+        { label: "padding-left", property: "padding-left", type: "text", placeholder: "0px" },
+        { label: "margin-top", property: "margin-top", type: "text", placeholder: "0px" },
+        { label: "margin-right", property: "margin-right", type: "text", placeholder: "0px" },
+        { label: "margin-bottom", property: "margin-bottom", type: "text", placeholder: "0px" },
+        { label: "margin-left", property: "margin-left", type: "text", placeholder: "0px" },
+        { label: "gap", property: "gap", type: "text", placeholder: "0px" },
+      ],
+    },
+    {
+      key: "background",
+      title: "Background",
+      controls: [{ label: "background", type: "background" }],
+    },
+    {
+      key: "typography",
+      title: "Typography",
+      controls: [
+        { label: "font-family", property: "font-family", type: "font-family" },
+        { label: "font-size", property: "font-size", type: "text", placeholder: "16px" },
+        { label: "font-weight", property: "font-weight", type: "text", placeholder: "400" },
+        { label: "line-height", property: "line-height", type: "text", placeholder: "1.4" },
+        { label: "letter-spacing", property: "letter-spacing", type: "text", placeholder: "0px" },
+        { label: "text-transform", property: "text-transform", type: "select", options: ["", "none", "uppercase", "lowercase", "capitalize"] },
+        { label: "text-decoration", property: "text-decoration", type: "select", options: ["", "none", "underline", "overline", "line-through"] },
+      ],
+    },
+    {
+      key: "border",
+      title: "Border",
+      controls: [
+        { label: "border-radius", property: "border-radius", type: "text", placeholder: "0px" },
+        { label: "border-width", property: "border-width", type: "text", placeholder: "0px" },
+        { label: "border-color", property: "border-color", type: "text", placeholder: "#000000" },
+      ],
+    },
+    {
+      key: "advanced",
+      title: "Advanced",
+      controls: [
+        { label: "color", property: "color", type: "text", placeholder: "#222222" },
+        { label: "text-align", property: "text-align", type: "select", options: ["", "left", "center", "right", "justify"] },
+      ],
+    },
   ];
+
+  const SYSTEM_FONT_CHOICES = [
+    { label: "Arial", family: "Arial", value: "\"Arial\", sans-serif" },
+    { label: "Helvetica", family: "Helvetica", value: "\"Helvetica\", sans-serif" },
+    { label: "Georgia", family: "Georgia", value: "\"Georgia\", serif" },
+    { label: "Times New Roman", family: "Times New Roman", value: "\"Times New Roman\", serif" },
+    { label: "Verdana", family: "Verdana", value: "\"Verdana\", sans-serif" },
+    { label: "sans-serif", family: "sans-serif", value: "sans-serif" },
+    { label: "serif", family: "serif", value: "serif" },
+    { label: "monospace", family: "monospace", value: "monospace" },
+  ];
+
+  const FONT_PROVIDER_LABELS = {
+    none: "None",
+    google: "Google Fonts",
+    bunny: "Bunny Fonts",
+    "adobe-edge": "Adobe Edge Fonts",
+  };
+
+  const KNOWN_SYSTEM_FAMILIES = new Set(
+    SYSTEM_FONT_CHOICES.map((item) => item.family.toLowerCase())
+  );
 
   const basicComponents = [
     { type: "section", name: "Section", description: "Structural section block", props: { text: "New section" } },
@@ -79,6 +141,14 @@
       animateCss: false,
       bootstrapJs: false,
     },
+    defaultsFonts: {
+      provider: "none",
+      families: [],
+    },
+    runtimeFonts: {
+      provider: "none",
+      families: [],
+    },
     selectedRelId: null,
     elementsMap: {},
     overridesMeta: {},
@@ -97,6 +167,22 @@
       pendingClientX: 0,
       moveHandler: null,
       upHandler: null,
+    },
+    controls: {
+      styleInputs: {},
+      fontFamilySelect: null,
+      fontFamilyWarning: null,
+      fontFamilyWarningText: null,
+      fontFamilyAutoLoadBtn: null,
+      backgroundType: null,
+      backgroundSolidRow: null,
+      backgroundGradientRow: null,
+      backgroundSolidRadio: null,
+      backgroundGradientRadio: null,
+      backgroundSolidInput: null,
+      backgroundGradientInput: null,
+      backgroundPreview: null,
+      pendingUnloadedFontFamily: "",
     },
   };
 
@@ -117,6 +203,11 @@
     bootstrapJsCheckbox: document.getElementById("bootstrapJsCheckbox"),
     iconSetSelect: document.getElementById("iconSetSelect"),
     animateCssCheckbox: document.getElementById("animateCssCheckbox"),
+    fontLibrarySelect: document.getElementById("fontLibrarySelect"),
+    fontLibraryFamilyRow: document.getElementById("fontLibraryFamilyRow"),
+    fontLibraryFamilyInput: document.getElementById("fontLibraryFamilyInput"),
+    addFontFamilyBtn: document.getElementById("addFontFamilyBtn"),
+    fontFamiliesList: document.getElementById("fontFamiliesList"),
     statusText: document.getElementById("statusText"),
     selectionInfo: document.getElementById("selectionInfo"),
     controlsContainer: document.getElementById("controlsContainer"),
@@ -159,6 +250,7 @@
     await loadProjectInfo();
     await loadPatchInfo();
     syncLibraryControlsFromState();
+    syncFontControlsFromState();
     buildAddPanel();
     loadIframe();
   }
@@ -262,6 +354,22 @@
     dom.bootstrapJsCheckbox.addEventListener("change", onLibraryChange);
     dom.iconSetSelect.addEventListener("change", onLibraryChange);
     dom.animateCssCheckbox.addEventListener("change", onLibraryChange);
+
+    dom.fontLibrarySelect.addEventListener("change", () => {
+      updateRuntimeFontsFromControls();
+    });
+
+    dom.addFontFamilyBtn.addEventListener("click", () => {
+      addFontFamilyFromToolbar();
+    });
+
+    dom.fontLibraryFamilyInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      addFontFamilyFromToolbar();
+    });
   }
 
   function onEditorKeyDown(event) {
@@ -331,38 +439,376 @@
 
   function buildStyleControls() {
     dom.controlsContainer.innerHTML = "";
+    state.controls.styleInputs = {};
+    state.controls.fontFamilySelect = null;
+    state.controls.fontFamilyWarning = null;
+    state.controls.fontFamilyWarningText = null;
+    state.controls.fontFamilyAutoLoadBtn = null;
+    state.controls.pendingUnloadedFontFamily = "";
+    state.controls.backgroundType = "solid";
+    state.controls.backgroundSolidRow = null;
+    state.controls.backgroundGradientRow = null;
+    state.controls.backgroundSolidRadio = null;
+    state.controls.backgroundGradientRadio = null;
+    state.controls.backgroundSolidInput = null;
+    state.controls.backgroundGradientInput = null;
+    state.controls.backgroundPreview = null;
 
-    for (const control of controlsSchema) {
-      const row = document.createElement("label");
-      row.className = "control-item";
-      row.setAttribute("data-property", control.property);
+    for (const section of styleSectionsSchema) {
+      const sectionRoot = document.createElement("section");
+      sectionRoot.className = "control-group";
+      sectionRoot.setAttribute("data-control-section", section.key);
 
-      const caption = document.createElement("span");
-      caption.textContent = control.label;
+      const title = document.createElement("h4");
+      title.textContent = section.title;
+      sectionRoot.appendChild(title);
 
-      let input;
-      if (control.type === "select") {
-        input = document.createElement("select");
-        for (const optionValue of control.options) {
-          const option = document.createElement("option");
-          option.value = optionValue;
-          option.textContent = optionValue || "(empty)";
-          input.appendChild(option);
+      for (const control of section.controls) {
+        if (control.type === "background") {
+          buildBackgroundControl(sectionRoot);
+          continue;
         }
-      } else {
-        input = document.createElement("input");
-        input.type = "text";
-        input.placeholder = control.placeholder || "";
+        if (control.type === "font-family") {
+          buildFontFamilyControl(sectionRoot, control);
+          continue;
+        }
+        buildSimpleStyleControl(sectionRoot, control);
       }
 
-      input.addEventListener("input", () => {
-        applyStyle(control.property, input.value);
+      dom.controlsContainer.appendChild(sectionRoot);
+    }
+
+    rebuildFontFamilyOptions("");
+    updateBackgroundControlVisibility();
+    updateBackgroundPreview();
+  }
+
+  function buildSimpleStyleControl(container, control) {
+    const row = document.createElement("label");
+    row.className = "control-item";
+    row.setAttribute("data-property", control.property);
+
+    const caption = document.createElement("span");
+    caption.textContent = control.label;
+
+    const input = createSimpleControlInput(control);
+    const eventName = control.type === "select" ? "change" : "input";
+    input.addEventListener(eventName, () => {
+      applyStyle(control.property, input.value);
+    });
+
+    row.appendChild(caption);
+    row.appendChild(input);
+    container.appendChild(row);
+    state.controls.styleInputs[control.property] = input;
+  }
+
+  function createSimpleControlInput(control) {
+    if (control.type === "select") {
+      const select = document.createElement("select");
+      for (const optionValue of control.options || []) {
+        const option = document.createElement("option");
+        option.value = optionValue;
+        option.textContent = optionValue || "(empty)";
+        select.appendChild(option);
+      }
+      return select;
+    }
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = control.placeholder || "";
+    return input;
+  }
+
+  function buildFontFamilyControl(container, control) {
+    const row = document.createElement("label");
+    row.className = "control-item";
+    row.setAttribute("data-property", control.property);
+
+    const caption = document.createElement("span");
+    caption.textContent = control.label;
+
+    const select = document.createElement("select");
+    select.addEventListener("change", () => {
+      applyStyle("font-family", select.value);
+      updateFontLoadingWarning(resolvePrimaryFontFamily(select.value));
+    });
+
+    row.appendChild(caption);
+    row.appendChild(select);
+    container.appendChild(row);
+
+    const warning = document.createElement("div");
+    warning.className = "font-loading-warning hidden";
+    const warningText = document.createElement("span");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Load Font";
+    button.addEventListener("click", () => {
+      autoLoadPendingFontFamily();
+    });
+    warning.appendChild(warningText);
+    warning.appendChild(button);
+    container.appendChild(warning);
+
+    state.controls.fontFamilySelect = select;
+    state.controls.fontFamilyWarning = warning;
+    state.controls.fontFamilyWarningText = warningText;
+    state.controls.fontFamilyAutoLoadBtn = button;
+  }
+
+  function buildBackgroundControl(container) {
+    const row = document.createElement("div");
+    row.className = "background-type-row";
+
+    const caption = document.createElement("span");
+    caption.textContent = "Background Type";
+    row.appendChild(caption);
+
+    const radioName = `background-type-${Math.random().toString(36).slice(2, 8)}`;
+
+    const solidLabel = document.createElement("label");
+    solidLabel.className = "radio-option";
+    const solidRadio = document.createElement("input");
+    solidRadio.type = "radio";
+    solidRadio.name = radioName;
+    solidRadio.value = "solid";
+    solidRadio.checked = true;
+    const solidText = document.createElement("span");
+    solidText.textContent = "Solid";
+    solidLabel.appendChild(solidRadio);
+    solidLabel.appendChild(solidText);
+
+    const gradientLabel = document.createElement("label");
+    gradientLabel.className = "radio-option";
+    const gradientRadio = document.createElement("input");
+    gradientRadio.type = "radio";
+    gradientRadio.name = radioName;
+    gradientRadio.value = "gradient";
+    const gradientText = document.createElement("span");
+    gradientText.textContent = "Gradient";
+    gradientLabel.appendChild(gradientRadio);
+    gradientLabel.appendChild(gradientText);
+
+    row.appendChild(solidLabel);
+    row.appendChild(gradientLabel);
+    container.appendChild(row);
+
+    const solidRow = document.createElement("label");
+    solidRow.className = "control-item";
+    solidRow.setAttribute("data-property", "background-color");
+    const solidCaption = document.createElement("span");
+    solidCaption.textContent = "Solid Color";
+    const solidInput = document.createElement("input");
+    solidInput.type = "color";
+    solidInput.value = "#ffffff";
+    solidInput.addEventListener("input", () => {
+      if (state.controls.backgroundType !== "solid") {
+        setBackgroundType("solid", true);
+      }
+      applyBackgroundFromControls();
+    });
+    solidRow.appendChild(solidCaption);
+    solidRow.appendChild(solidInput);
+    container.appendChild(solidRow);
+
+    const gradientRow = document.createElement("label");
+    gradientRow.className = "control-item";
+    gradientRow.setAttribute("data-property", "background");
+    const gradientCaption = document.createElement("span");
+    gradientCaption.textContent = "Gradient CSS";
+    const gradientInput = document.createElement("textarea");
+    gradientInput.placeholder = "linear-gradient(0deg, #df1111, #000000)";
+    gradientInput.addEventListener("input", () => {
+      if (state.controls.backgroundType !== "gradient") {
+        setBackgroundType("gradient", true);
+      }
+      applyBackgroundFromControls();
+    });
+    gradientRow.appendChild(gradientCaption);
+    gradientRow.appendChild(gradientInput);
+    container.appendChild(gradientRow);
+
+    const preview = document.createElement("div");
+    preview.className = "background-preview";
+    container.appendChild(preview);
+
+    solidRadio.addEventListener("change", () => {
+      if (!solidRadio.checked) {
+        return;
+      }
+      setBackgroundType("solid", true);
+      applyBackgroundFromControls();
+    });
+
+    gradientRadio.addEventListener("change", () => {
+      if (!gradientRadio.checked) {
+        return;
+      }
+      setBackgroundType("gradient", true);
+      applyBackgroundFromControls();
+    });
+
+    state.controls.backgroundSolidRow = solidRow;
+    state.controls.backgroundGradientRow = gradientRow;
+    state.controls.backgroundSolidRadio = solidRadio;
+    state.controls.backgroundGradientRadio = gradientRadio;
+    state.controls.backgroundSolidInput = solidInput;
+    state.controls.backgroundGradientInput = gradientInput;
+    state.controls.backgroundPreview = preview;
+  }
+
+  function setBackgroundType(type, force) {
+    const nextType = type === "gradient" ? "gradient" : "solid";
+    if (!force && state.controls.backgroundType === nextType) {
+      return;
+    }
+    state.controls.backgroundType = nextType;
+    updateBackgroundControlVisibility();
+    updateBackgroundPreview();
+  }
+
+  function updateBackgroundControlVisibility() {
+    const isGradient = state.controls.backgroundType === "gradient";
+    if (state.controls.backgroundSolidRow) {
+      state.controls.backgroundSolidRow.classList.toggle("hidden", isGradient);
+    }
+    if (state.controls.backgroundGradientRow) {
+      state.controls.backgroundGradientRow.classList.toggle("hidden", !isGradient);
+    }
+    if (state.controls.backgroundSolidRadio) {
+      state.controls.backgroundSolidRadio.checked = !isGradient;
+    }
+    if (state.controls.backgroundGradientRadio) {
+      state.controls.backgroundGradientRadio.checked = isGradient;
+    }
+  }
+
+  function applyBackgroundFromControls() {
+    if (!state.selectedRelId) {
+      updateBackgroundPreview();
+      return;
+    }
+
+    if (state.controls.backgroundType === "gradient") {
+      const gradientValue = String(state.controls.backgroundGradientInput?.value || "").trim();
+      applyStyle("background-color", "");
+      applyStyle("background", gradientValue);
+    } else {
+      const solidValue = String(state.controls.backgroundSolidInput?.value || "").trim();
+      applyStyle("background", "");
+      applyStyle("background-color", solidValue);
+    }
+    updateBackgroundPreview();
+  }
+
+  function updateBackgroundPreview() {
+    const preview = state.controls.backgroundPreview;
+    if (!preview) {
+      return;
+    }
+
+    preview.style.background = "";
+    preview.style.backgroundColor = "";
+
+    if (state.controls.backgroundType === "gradient") {
+      const gradientValue = String(state.controls.backgroundGradientInput?.value || "").trim();
+      if (gradientValue) {
+        preview.style.background = gradientValue;
+      }
+      return;
+    }
+
+    const colorValue = String(state.controls.backgroundSolidInput?.value || "").trim();
+    if (colorValue) {
+      preview.style.backgroundColor = colorValue;
+    }
+  }
+
+  function rebuildFontFamilyOptions(currentValue) {
+    const select = state.controls.fontFamilySelect;
+    if (!select) {
+      return;
+    }
+
+    const currentPrimaryFamily = resolvePrimaryFontFamily(currentValue);
+    const previousPrimaryFamily = resolvePrimaryFontFamily(select.value);
+    const preferredPrimary = currentPrimaryFamily || previousPrimaryFamily;
+    const providerLabel = FONT_PROVIDER_LABELS[state.runtimeFonts.provider] || FONT_PROVIDER_LABELS.none;
+
+    select.innerHTML = "";
+
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "(empty)";
+    select.appendChild(emptyOption);
+
+    for (const choice of SYSTEM_FONT_CHOICES) {
+      const option = document.createElement("option");
+      option.value = choice.value;
+      option.textContent = choice.label;
+      option.dataset.relFontFamily = choice.family;
+      option.dataset.relFontSystem = "1";
+      select.appendChild(option);
+    }
+
+    const runtimeFamilies = ensureFontFamilies(state.runtimeFonts.families);
+    for (const family of runtimeFamilies) {
+      const option = document.createElement("option");
+      option.value = buildExternalFontFamilyValue(family);
+      option.textContent = `${family} (${providerLabel})`;
+      option.dataset.relFontFamily = family;
+      option.dataset.relFontExternal = "1";
+      select.appendChild(option);
+    }
+
+    if (preferredPrimary) {
+      const matching = Array.from(select.options).find((option) => {
+        return option.dataset.relFontFamily && option.dataset.relFontFamily.toLowerCase() === preferredPrimary.toLowerCase();
       });
 
-      row.appendChild(caption);
-      row.appendChild(input);
-      dom.controlsContainer.appendChild(row);
+      if (matching) {
+        select.value = matching.value;
+      } else if (currentValue) {
+        const customOption = document.createElement("option");
+        customOption.value = currentValue;
+        customOption.textContent = `${preferredPrimary} (current)`;
+        customOption.dataset.relFontFamily = preferredPrimary;
+        customOption.dataset.relFontExternal = "1";
+        customOption.dataset.relFontMissing = "1";
+        select.appendChild(customOption);
+        select.value = customOption.value;
+      } else {
+        select.value = "";
+      }
+    } else {
+      select.value = currentValue || "";
     }
+
+    updateFontLoadingWarning(resolvePrimaryFontFamily(select.value));
+  }
+
+  function updateFontLoadingWarning(primaryFamily) {
+    const warning = state.controls.fontFamilyWarning;
+    const warningText = state.controls.fontFamilyWarningText;
+    const warningButton = state.controls.fontFamilyAutoLoadBtn;
+    if (!warning || !warningText || !warningButton) {
+      return;
+    }
+
+    const family = String(primaryFamily || "").trim();
+    if (!family || KNOWN_SYSTEM_FAMILIES.has(family.toLowerCase()) || isLoadedRuntimeFontFamily(family)) {
+      warning.classList.add("hidden");
+      state.controls.pendingUnloadedFontFamily = "";
+      return;
+    }
+
+    const provider = state.runtimeFonts.provider !== "none" ? state.runtimeFonts.provider : "google";
+    warningText.textContent = `Font "${family}" is not loaded.`;
+    warningButton.textContent = `Load via ${FONT_PROVIDER_LABELS[provider] || provider}`;
+    warning.classList.remove("hidden");
+    state.controls.pendingUnloadedFontFamily = family;
   }
 
   function buildAddPanel() {
@@ -455,6 +901,8 @@
     state.indexPath = data.index_path;
     state.defaultsLibraries = normalizeRuntimeLibraries(data.defaults_libraries || {});
     state.runtimeLibraries = { ...state.defaultsLibraries };
+    state.defaultsFonts = normalizeRuntimeFonts(data.defaults_fonts || {});
+    state.runtimeFonts = { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
     dom.projectRootInput.value = data.project_root;
     dom.indexPathInput.value = data.index_path;
     setStatus(`Loaded project: ${data.project_root}`);
@@ -482,6 +930,8 @@
     state.indexPath = data.index_path;
     state.defaultsLibraries = normalizeRuntimeLibraries(data.defaults_libraries || {});
     state.runtimeLibraries = { ...state.defaultsLibraries };
+    state.defaultsFonts = normalizeRuntimeFonts(data.defaults_fonts || {});
+    state.runtimeFonts = { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
     state.selectedRelId = null;
     state.elementsMap = {};
     state.overridesMeta = {};
@@ -495,6 +945,7 @@
 
     await loadPatchInfo();
     syncLibraryControlsFromState();
+    syncFontControlsFromState();
     buildAddPanel();
     clearSelectionUi();
     loadIframe();
@@ -525,6 +976,7 @@
     state.addedNodes = normalizedPatch.addedNodes;
     state.deletedNodes = normalizedPatch.deletedNodes;
     state.runtimeLibraries = normalizedPatch.runtimeLibraries || { ...state.defaultsLibraries };
+    state.runtimeFonts = normalizedPatch.runtimeFonts || { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
 
     if (hasPatchContent()) {
       setStatus("Patch loaded");
@@ -543,6 +995,7 @@
       addedNodes: state.addedNodes,
       deletedNodes: state.deletedNodes,
       runtimeLibraries: state.runtimeLibraries,
+      runtimeFonts: state.runtimeFonts,
     };
 
     const overrideCss = buildOverrideCss(state.overridesMeta);
@@ -671,6 +1124,13 @@
       state.runtimeLibraries = normalizeRuntimeLibraries(msg.payload || state.runtimeLibraries);
       syncLibraryControlsFromState();
       buildAddPanel();
+      return;
+    }
+
+    if (msg.type === "REL_FONTS_APPLIED") {
+      state.runtimeFonts = normalizeRuntimeFonts(msg.payload || state.runtimeFonts);
+      syncFontControlsFromState();
+      return;
     }
   }
 
@@ -715,11 +1175,27 @@
     dom.imageSettingsSection.classList.add("hidden");
     dom.deleteElementBtn.disabled = true;
 
-    const rows = dom.controlsContainer.querySelectorAll("[data-property]");
-    for (const row of rows) {
-      const input = row.querySelector("input, select");
-      input.value = "";
+    for (const property of Object.keys(state.controls.styleInputs || {})) {
+      const input = state.controls.styleInputs[property];
+      if (input) {
+        input.value = "";
+      }
     }
+
+    if (state.controls.fontFamilySelect) {
+      rebuildFontFamilyOptions("");
+      state.controls.fontFamilySelect.value = "";
+    }
+
+    if (state.controls.backgroundSolidInput) {
+      state.controls.backgroundSolidInput.value = "#ffffff";
+    }
+    if (state.controls.backgroundGradientInput) {
+      state.controls.backgroundGradientInput.value = "";
+    }
+    setBackgroundType("solid", true);
+    updateFontLoadingWarning("");
+    updateBackgroundPreview();
 
     markActiveTreeNode("");
   }
@@ -752,12 +1228,42 @@
   }
 
   function updateStyleControlValues(computed, overrides) {
-    const rows = dom.controlsContainer.querySelectorAll("[data-property]");
-    for (const row of rows) {
-      const property = row.getAttribute("data-property");
-      const input = row.querySelector("input, select");
+    for (const property of Object.keys(state.controls.styleInputs || {})) {
+      const input = state.controls.styleInputs[property];
+      if (!input) {
+        continue;
+      }
       input.value = overrides[property] ?? computed[property] ?? "";
     }
+
+    const effectiveFontFamily = overrides["font-family"] ?? computed["font-family"] ?? "";
+    rebuildFontFamilyOptions(effectiveFontFamily);
+
+    const overrideBackground = String(overrides.background ?? "").trim();
+    const computedBackground = String(computed.background ?? "").trim();
+    const computedBackgroundImage = String(computed["background-image"] ?? "").trim();
+    const overrideBackgroundColor = String(overrides["background-color"] ?? "").trim();
+    const computedBackgroundColor = String(computed["background-color"] ?? "").trim();
+    const hasGradient = isGradientValue(overrideBackground) || (!overrideBackground && isGradientValue(computedBackgroundImage));
+
+    if (hasGradient) {
+      const gradientValue = overrideBackground || computedBackground || computedBackgroundImage;
+      if (state.controls.backgroundGradientInput) {
+        state.controls.backgroundGradientInput.value = gradientValue;
+      }
+      setBackgroundType("gradient", true);
+    } else {
+      const colorValue = overrideBackgroundColor || computedBackgroundColor;
+      if (state.controls.backgroundSolidInput) {
+        state.controls.backgroundSolidInput.value = toHexColor(colorValue, "#ffffff");
+      }
+      if (state.controls.backgroundGradientInput) {
+        state.controls.backgroundGradientInput.value = "";
+      }
+      setBackgroundType("solid", true);
+    }
+
+    updateBackgroundPreview();
   }
 
   function updateAttributesPanel(selection, attrs) {
@@ -1036,6 +1542,7 @@
         addedNodes: state.addedNodes,
         deletedNodes: state.deletedNodes,
         runtimeLibraries: state.runtimeLibraries,
+        runtimeFonts: state.runtimeFonts,
       },
     });
 
@@ -1087,6 +1594,153 @@
         runtimeLibraries: state.runtimeLibraries,
       },
     });
+  }
+
+  function syncFontControlsFromState() {
+    const fonts = normalizeRuntimeFonts(state.runtimeFonts || state.defaultsFonts);
+    state.runtimeFonts = fonts;
+
+    dom.fontLibrarySelect.value = fonts.provider;
+    const isProviderActive = fonts.provider !== "none";
+    dom.fontLibraryFamilyRow.classList.toggle("hidden", !isProviderActive);
+    dom.fontLibraryFamilyInput.disabled = !isProviderActive;
+    dom.addFontFamilyBtn.disabled = !isProviderActive;
+    dom.fontLibraryFamilyInput.placeholder = getFontFamilyPlaceholder(fonts.provider);
+
+    renderToolbarFontFamilies(fonts);
+    rebuildFontFamilyOptions(state.controls.fontFamilySelect ? state.controls.fontFamilySelect.value : "");
+  }
+
+  function updateRuntimeFontsFromControls() {
+    const nextProvider = normalizeEnumValue(dom.fontLibrarySelect.value, ["none", "google", "bunny", "adobe-edge"], "none");
+    const families = nextProvider === "none" ? [] : ensureFontFamilies(state.runtimeFonts.families);
+    const nextFonts = normalizeRuntimeFonts({
+      provider: nextProvider,
+      families,
+    });
+
+    const changed = JSON.stringify(nextFonts) !== JSON.stringify(state.runtimeFonts);
+    state.runtimeFonts = nextFonts;
+    syncFontControlsFromState();
+
+    if (changed) {
+      setStatus("Runtime fonts updated");
+    }
+
+    sendToOverlay({
+      type: "REL_SET_FONTS",
+      payload: {
+        runtimeFonts: state.runtimeFonts,
+      },
+    });
+  }
+
+  function addFontFamilyFromToolbar() {
+    const provider = state.runtimeFonts.provider;
+    if (provider === "none") {
+      setStatus("Select a font provider first", true);
+      return;
+    }
+
+    const rawFamily = String(dom.fontLibraryFamilyInput.value || "").trim();
+    const family = normalizeFontFamilyName(rawFamily);
+    if (!family) {
+      return;
+    }
+
+    const families = ensureFontFamilies(state.runtimeFonts.families);
+    const exists = families.some((item) => item.toLowerCase() === family.toLowerCase());
+    if (!exists) {
+      families.push(family);
+      state.runtimeFonts = normalizeRuntimeFonts({
+        provider,
+        families,
+      });
+      setStatus(`Loaded font: ${family}`);
+    } else {
+      setStatus(`Font already loaded: ${family}`);
+    }
+
+    dom.fontLibraryFamilyInput.value = "";
+    syncFontControlsFromState();
+    sendToOverlay({
+      type: "REL_SET_FONTS",
+      payload: {
+        runtimeFonts: state.runtimeFonts,
+      },
+    });
+  }
+
+  function renderToolbarFontFamilies(fonts) {
+    dom.fontFamiliesList.innerHTML = "";
+    const families = ensureFontFamilies(fonts.families);
+    if (families.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "add-item-desc";
+      empty.textContent = "No fonts loaded";
+      dom.fontFamiliesList.appendChild(empty);
+      return;
+    }
+
+    for (const family of families) {
+      const chip = document.createElement("span");
+      chip.className = "font-chip";
+      chip.textContent = family;
+      dom.fontFamiliesList.appendChild(chip);
+    }
+  }
+
+  function autoLoadPendingFontFamily() {
+    const pendingFamily = normalizeFontFamilyName(state.controls.pendingUnloadedFontFamily);
+    if (!pendingFamily) {
+      return;
+    }
+
+    let provider = state.runtimeFonts.provider;
+    if (provider === "none") {
+      provider = "google";
+    }
+
+    const families = ensureFontFamilies(state.runtimeFonts.families);
+    if (!families.some((item) => item.toLowerCase() === pendingFamily.toLowerCase())) {
+      families.push(pendingFamily);
+    }
+
+    state.runtimeFonts = normalizeRuntimeFonts({
+      provider,
+      families,
+    });
+
+    syncFontControlsFromState();
+    sendToOverlay({
+      type: "REL_SET_FONTS",
+      payload: {
+        runtimeFonts: state.runtimeFonts,
+      },
+    });
+
+    const targetValue = buildExternalFontFamilyValue(pendingFamily);
+    rebuildFontFamilyOptions(targetValue);
+    if (state.controls.fontFamilySelect) {
+      state.controls.fontFamilySelect.value = targetValue;
+    }
+    if (state.selectedRelId) {
+      applyStyle("font-family", targetValue);
+    }
+    setStatus(`Loaded font: ${pendingFamily}`);
+  }
+
+  function getFontFamilyPlaceholder(provider) {
+    if (provider === "google") {
+      return "Poppins";
+    }
+    if (provider === "bunny") {
+      return "Nunito";
+    }
+    if (provider === "adobe-edge") {
+      return "Source Sans Pro";
+    }
+    return "Font family";
   }
 
   function buildOverrideCss(overridesMeta) {
@@ -1159,6 +1813,10 @@
       patch.runtimeLibraries ||
       patch.runtime_libraries ||
       null;
+    const runtimeFonts =
+      patch.runtimeFonts ||
+      patch.runtime_fonts ||
+      null;
 
     return {
       version: Number(patch.version || 1),
@@ -1169,6 +1827,7 @@
       addedNodes: ensureArray(patch.addedNodes || patch.added_nodes),
       deletedNodes: ensureArray(patch.deletedNodes || patch.deleted_nodes),
       runtimeLibraries: runtimeLibraries ? normalizeRuntimeLibraries(runtimeLibraries) : null,
+      runtimeFonts: runtimeFonts ? normalizeRuntimeFonts(runtimeFonts) : null,
     };
   }
 
@@ -1184,6 +1843,103 @@
     };
   }
 
+  function normalizeRuntimeFonts(value) {
+    const raw = value && typeof value === "object" ? value : {};
+    const provider = normalizeEnumValue(raw.provider, ["none", "google", "bunny", "adobe-edge"], "none");
+    return {
+      provider,
+      families: provider === "none" ? [] : ensureFontFamilies(raw.families),
+    };
+  }
+
+  function ensureFontFamilies(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const unique = [];
+    const seen = new Set();
+    for (const item of value) {
+      const normalized = normalizeFontFamilyName(item);
+      if (!normalized) {
+        continue;
+      }
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      unique.push(normalized);
+    }
+    return unique;
+  }
+
+  function normalizeFontFamilyName(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\s+/g, " ");
+  }
+
+  function buildExternalFontFamilyValue(family) {
+    const normalized = normalizeFontFamilyName(family);
+    if (!normalized) {
+      return "";
+    }
+    return `"${normalized.replace(/"/g, '\\"')}", sans-serif`;
+  }
+
+  function resolvePrimaryFontFamily(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "";
+    }
+    const firstPart = raw.split(",")[0] || "";
+    return normalizeFontFamilyName(firstPart.replace(/^['"]+|['"]+$/g, ""));
+  }
+
+  function isLoadedRuntimeFontFamily(family) {
+    const target = normalizeFontFamilyName(family).toLowerCase();
+    if (!target) {
+      return false;
+    }
+    return ensureFontFamilies(state.runtimeFonts.families).some((item) => item.toLowerCase() === target);
+  }
+
+  function isGradientValue(value) {
+    return /gradient\s*\(/i.test(String(value || ""));
+  }
+
+  function toHexColor(value, fallback) {
+    const input = String(value || "").trim();
+    if (!input) {
+      return fallback || "#ffffff";
+    }
+
+    const hexMatch = input.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hexMatch) {
+      const raw = hexMatch[1];
+      if (raw.length === 3) {
+        return `#${raw[0]}${raw[0]}${raw[1]}${raw[1]}${raw[2]}${raw[2]}`.toLowerCase();
+      }
+      return `#${raw.toLowerCase()}`;
+    }
+
+    const rgbMatch = input.match(/^rgba?\(\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i);
+    if (rgbMatch) {
+      const alpha = typeof rgbMatch[4] === "string" ? Number(rgbMatch[4]) : 1;
+      if (Number.isFinite(alpha) && alpha <= 0) {
+        return fallback || "#ffffff";
+      }
+      const r = clamp(Number(rgbMatch[1]), 0, 255);
+      const g = clamp(Number(rgbMatch[2]), 0, 255);
+      const b = clamp(Number(rgbMatch[3]), 0, 255);
+      const toHex = (n) => Number(n).toString(16).padStart(2, "0");
+      return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    }
+
+    return fallback || "#ffffff";
+  }
+
   function normalizeEnumValue(input, allowed, fallback) {
     const value = String(input || "").trim().toLowerCase();
     return allowed.includes(value) ? value : fallback;
@@ -1191,13 +1947,15 @@
 
   function hasPatchContent() {
     const runtimeDiff = JSON.stringify(normalizeRuntimeLibraries(state.runtimeLibraries)) !== JSON.stringify(normalizeRuntimeLibraries(state.defaultsLibraries));
+    const runtimeFontsDiff = JSON.stringify(normalizeRuntimeFonts(state.runtimeFonts)) !== JSON.stringify(normalizeRuntimeFonts(state.defaultsFonts));
     return (
       Object.keys(state.overridesMeta).length > 0 ||
       Object.keys(state.attributesMeta).length > 0 ||
       Object.keys(state.linksMeta).length > 0 ||
       state.addedNodes.length > 0 ||
       state.deletedNodes.length > 0 ||
-      runtimeDiff
+      runtimeDiff ||
+      runtimeFontsDiff
     );
   }
 

@@ -51,6 +51,22 @@
         Animate.css
       </label>
     </div>
+    <div class="fonts-box">
+      <label>
+        Font Library
+        <select id="fontLibrarySelect">
+          <option value="none">None</option>
+          <option value="google">Google Fonts</option>
+          <option value="bunny">Bunny Fonts</option>
+          <option value="adobe-edge">Adobe Edge Fonts</option>
+        </select>
+      </label>
+      <div id="fontLibraryFamilyRow" class="font-library-row hidden">
+        <input id="fontLibraryFamilyInput" type="text" placeholder="Poppins">
+        <button id="addFontFamilyBtn" type="button">Add Font</button>
+      </div>
+      <div id="fontFamiliesList" class="font-families-list"></div>
+    </div>
     <div id="statusText" class="status">Ready</div>
   </header>
 

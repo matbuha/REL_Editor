@@ -24,6 +24,7 @@ async function main() {
   const externalStyles = sanitizeExternalList(config.externalStyles);
   const externalScripts = sanitizeExternalList(config.externalScripts);
   const defaultsLibraries = normalizeDefaultsLibraries(config.defaultsLibraries);
+  const defaultsFonts = normalizeDefaultsFonts(config.defaultsFonts);
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -50,6 +51,7 @@ async function main() {
       external_styles: externalStyles,
       external_scripts: externalScripts,
       defaults_libraries: defaultsLibraries,
+      defaults_fonts: defaultsFonts,
     });
   });
 
@@ -79,6 +81,7 @@ async function main() {
         external_styles: externalStyles,
         external_scripts: externalScripts,
         defaults_libraries: defaultsLibraries,
+        defaults_fonts: defaultsFonts,
       });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -111,6 +114,7 @@ async function main() {
         addedNodes: [],
         deletedNodes: [],
         runtimeLibraries: defaultsLibraries,
+        runtimeFonts: defaultsFonts,
       };
       const overrideCss = typeof body.override_css === "string" ? body.override_css : "";
 
@@ -299,6 +303,32 @@ function normalizeDefaultsLibraries(value) {
     iconSet: iconSet || "none",
     animateCss,
     bootstrapJs,
+  };
+}
+
+function normalizeDefaultsFonts(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const provider = String(raw.provider || "none").trim().toLowerCase();
+  const families = Array.isArray(raw.families)
+    ? Array.from(
+      new Set(
+        raw.families
+          .map((item) => String(item || "").trim().replace(/\s+/g, " "))
+          .filter(Boolean)
+      )
+    )
+    : [];
+
+  if (!["none", "google", "bunny", "adobe-edge"].includes(provider)) {
+    return { provider: "none", families: [] };
+  }
+  if (provider === "none") {
+    return { provider: "none", families: [] };
+  }
+
+  return {
+    provider,
+    families,
   };
 }
 
