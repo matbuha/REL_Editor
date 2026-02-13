@@ -10,9 +10,12 @@ Current implementation includes:
 - Runtime overlay injection into served HTML
 - Element selection + highlight + style control inputs
 - ID/Class live editing (saved in patch metadata)
+- Element delete support (button + keyboard with confirm)
 - Link settings (href/target/rel/title) with runtime wrapping for non-`<a>` elements
 - Image settings + local upload to `rel_editor/assets`
 - ADD panel with draggable components and runtime node insertion
+- Resizable left/right panels with saved layout (`localStorage`)
+- Runtime CDN library manager (Bootstrap/Bulma/Pico/Tailwind + icon sets + Animate.css)
 - Patch save/load (`rel_editor/patch.json`, `rel_editor/override.css`)
 - Tree tab snapshot + search + element selection
 - External CDN style/script injection from `rel.config.json`
@@ -42,6 +45,12 @@ The editor serves the project from `/project/*` on the same origin, then injects
 - `/project/rel_editor/override.css` (if exists)
 - `externalStyles` and `externalScripts` from `rel.config.json` (if configured)
 
+`rel.config.json` can define runtime default libraries under:
+- `defaultsLibraries.designLibrary`
+- `defaultsLibraries.iconSet`
+- `defaultsLibraries.animateCss`
+- `defaultsLibraries.bootstrapJs`
+
 ## Patch files location
 
 When saving, files are created under the selected project root:
@@ -50,11 +59,14 @@ When saving, files are created under the selected project root:
 - `rel_editor/assets/*` (uploaded images)
 
 `patch.json` stores:
-- `elements` (`relId -> fallback selector`)
-- `overrides_meta` (CSS overrides)
-- `attributes_meta` (id/class/src/alt/etc)
-- `links_meta` (runtime link wrapping and link attributes)
-- `added_nodes` (runtime-added components from ADD panel)
+- `version` (current schema: `2`)
+- `elementsMap` (`relId -> fallback selector`)
+- `overridesMeta` (CSS overrides)
+- `attributesMeta` (id/class/src/alt/etc)
+- `linksMeta` (runtime link wrapping and link attributes)
+- `addedNodes` (runtime-added components from ADD panel)
+- `deletedNodes` (runtime deletions)
+- `runtimeLibraries` (active CDN libraries for runtime)
 
 ## Export behavior
 
@@ -72,18 +84,21 @@ When saving, files are created under the selected project root:
 
 `demo_project/` is included so you can validate flow quickly.
 
-## Manual test steps
+## Manual test checklist
 
-1. Start editor (`start_rel_editor.bat` or `start_rel_editor.sh`).
-2. Keep defaults (`demo_project`, `index.html`) and click **Load Project**.
-3. Click an element inside iframe and confirm orange outline + info panel update.
-4. Edit `class` in the right panel and confirm live update.
-5. Enable **Make this element a link**, set `href`, confirm runtime wrapping.
-6. Switch to **add** tab, drag a component into iframe, confirm it is inserted.
-7. Select an image and click **Upload Image**.
-8. Click **Save Patch**.
-9. Refresh page and confirm class/link/add/image changes are restored from patch.
-10. Click **Export Safe** and verify `demo_project/REL_index.html` exists.
+1. Start editor (`start_rel_editor.bat` or `start_rel_editor.sh`) and load `demo_project/index.html`.
+2. Select an element and click **Delete Element**.
+3. Select another element and press `Delete` key.
+4. Press `Backspace` while not focused on editor inputs to delete selected element.
+5. Refresh editor and verify deleted elements remain deleted.
+6. Verify tree tab updates immediately after each delete.
+7. Drag left/right panel resizers and verify widths update in real time.
+8. Refresh page and verify panel widths were restored from `localStorage`.
+9. Click **Reset Layout** and verify default layout returns.
+10. Choose **Bootstrap 5** in Design Library, drag a Bootstrap block, and verify it has Bootstrap classes.
+11. Switch Design Library to **None** and verify injected library links/scripts are removed from iframe `<head>`.
+12. Save patch and verify `demo_project/rel_editor/patch.json` and `demo_project/rel_editor/override.css`.
+13. Click **Export Safe** and verify `demo_project/REL_index.html` exists.
 
 ## Notes
 

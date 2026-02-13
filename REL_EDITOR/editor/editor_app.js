@@ -47,29 +47,76 @@
     { type: "bootstrap-navbar", name: "Navbar", description: "Bootstrap navbar", props: {} },
   ];
 
+  const bulmaComponents = [
+    { type: "bulma-button", name: "Bulma Button", description: "Bulma styled button", props: { text: "Bulma Button" } },
+    { type: "bulma-card", name: "Bulma Card", description: "Bulma card layout", props: {} },
+  ];
+
+  const picoComponents = [
+    { type: "pico-button", name: "Pico Button", description: "Pico button style", props: { text: "Pico Button" } },
+    { type: "pico-link", name: "Pico Link", description: "Pico link style", props: { text: "Pico Link", href: "#" } },
+  ];
+
+  const PATCH_VERSION = 2;
+  const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
+  const LEFT_MIN_PX = 200;
+  const RIGHT_MIN_PX = 260;
+  const CENTER_MIN_PX = 320;
+  const RESIZER_TOTAL_PX = 16;
+
   const state = {
     projectRoot: "",
     indexPath: "index.html",
-    externalStyles: [],
-    externalScripts: [],
+    defaultsLibraries: {
+      designLibrary: "none",
+      iconSet: "none",
+      animateCss: false,
+      bootstrapJs: false,
+    },
+    runtimeLibraries: {
+      designLibrary: "none",
+      iconSet: "none",
+      animateCss: false,
+      bootstrapJs: false,
+    },
     selectedRelId: null,
     elementsMap: {},
     overridesMeta: {},
     attributesMeta: {},
     linksMeta: {},
     addedNodes: [],
+    deletedNodes: [],
     lastSelection: null,
     lastTreeSnapshot: [],
     overlayReady: false,
+    layout: {
+      leftPx: null,
+      rightPx: null,
+      resizeSide: null,
+      rafId: 0,
+      pendingClientX: 0,
+      moveHandler: null,
+      upHandler: null,
+    },
   };
 
   const dom = {
+    layoutRoot: document.getElementById("layoutRoot"),
+    leftResizer: document.getElementById("leftResizer"),
+    rightResizer: document.getElementById("rightResizer"),
+    resizeOverlay: document.getElementById("resizeOverlay"),
     iframe: document.getElementById("liveFrame"),
     projectRootInput: document.getElementById("projectRootInput"),
     indexPathInput: document.getElementById("indexPathInput"),
     loadProjectBtn: document.getElementById("loadProjectBtn"),
     savePatchBtn: document.getElementById("savePatchBtn"),
     exportSafeBtn: document.getElementById("exportSafeBtn"),
+    resetLayoutBtn: document.getElementById("resetLayoutBtn"),
+    deleteElementBtn: document.getElementById("deleteElementBtn"),
+    designLibrarySelect: document.getElementById("designLibrarySelect"),
+    bootstrapJsCheckbox: document.getElementById("bootstrapJsCheckbox"),
+    iconSetSelect: document.getElementById("iconSetSelect"),
+    animateCssCheckbox: document.getElementById("animateCssCheckbox"),
     statusText: document.getElementById("statusText"),
     selectionInfo: document.getElementById("selectionInfo"),
     controlsContainer: document.getElementById("controlsContainer"),
@@ -106,15 +153,19 @@
   async function init() {
     setupTabs();
     buildStyleControls();
+    clearSelectionUi();
     bindEvents();
+    initResizableLayout();
     await loadProjectInfo();
     await loadPatchInfo();
+    syncLibraryControlsFromState();
     buildAddPanel();
     loadIframe();
   }
 
   function bindEvents() {
     window.addEventListener("message", onMessageFromOverlay);
+    window.addEventListener("keydown", onEditorKeyDown, true);
 
     dom.loadProjectBtn.addEventListener("click", async () => {
       await applyProjectSelection();
@@ -126,6 +177,14 @@
 
     dom.exportSafeBtn.addEventListener("click", async () => {
       await exportSafe();
+    });
+
+    dom.resetLayoutBtn.addEventListener("click", () => {
+      resetLayoutWidths();
+    });
+
+    dom.deleteElementBtn.addEventListener("click", () => {
+      requestDeleteSelected("button");
     });
 
     dom.refreshTreeBtn.addEventListener("click", requestTreeSnapshot);
@@ -194,6 +253,64 @@
     dom.uploadImageInput.addEventListener("change", async () => {
       await uploadImageFromInput();
     });
+
+    const onLibraryChange = () => {
+      updateRuntimeLibrariesFromControls();
+    };
+
+    dom.designLibrarySelect.addEventListener("change", onLibraryChange);
+    dom.bootstrapJsCheckbox.addEventListener("change", onLibraryChange);
+    dom.iconSetSelect.addEventListener("change", onLibraryChange);
+    dom.animateCssCheckbox.addEventListener("change", onLibraryChange);
+  }
+
+  function onEditorKeyDown(event) {
+    const key = event.key;
+    if (key !== "Delete" && key !== "Backspace") {
+      return;
+    }
+
+    if (!state.selectedRelId) {
+      return;
+    }
+
+    if (document.activeElement === dom.iframe) {
+      return;
+    }
+
+    if (isEditableElement(document.activeElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    requestDeleteSelected("keyboard");
+  }
+
+  function requestDeleteSelected(source) {
+    if (!state.selectedRelId) {
+      return;
+    }
+
+    const selection = state.lastSelection || {};
+    if (selection.canDelete === false) {
+      setStatus("This element is protected and cannot be deleted", true);
+      return;
+    }
+
+    const shouldDelete = window.confirm("Delete selected element?");
+    if (!shouldDelete) {
+      return;
+    }
+
+    sendToOverlay({
+      type: "REL_DELETE_NODE",
+      payload: {
+        relId: state.selectedRelId,
+        fallbackSelector: state.elementsMap[state.selectedRelId] || "",
+        source,
+      },
+    });
   }
   function setupTabs() {
     const buttons = Array.from(document.querySelectorAll(".tab-btn"));
@@ -250,12 +367,23 @@
 
   function buildAddPanel() {
     renderComponentList(dom.addBasicList, basicComponents, false);
-
-    const bootstrapActive = state.externalStyles.some((href) => /bootstrap/i.test(href));
-    dom.addExternalSection.classList.toggle("hidden", !bootstrapActive);
     dom.addExternalList.innerHTML = "";
-    if (bootstrapActive) {
-      renderComponentList(dom.addExternalList, bootstrapComponents, true);
+
+    const externalComponents = [];
+    const designLibrary = state.runtimeLibraries.designLibrary;
+    if (designLibrary === "bootstrap") {
+      externalComponents.push(...bootstrapComponents);
+    }
+    if (designLibrary === "bulma") {
+      externalComponents.push(...bulmaComponents);
+    }
+    if (designLibrary === "pico") {
+      externalComponents.push(...picoComponents);
+    }
+
+    dom.addExternalSection.classList.toggle("hidden", externalComponents.length === 0);
+    if (externalComponents.length > 0) {
+      renderComponentList(dom.addExternalList, externalComponents, true);
     }
   }
 
@@ -325,8 +453,8 @@
     const data = await response.json();
     state.projectRoot = data.project_root;
     state.indexPath = data.index_path;
-    state.externalStyles = Array.isArray(data.external_styles) ? data.external_styles : [];
-    state.externalScripts = Array.isArray(data.external_scripts) ? data.external_scripts : [];
+    state.defaultsLibraries = normalizeRuntimeLibraries(data.defaults_libraries || {});
+    state.runtimeLibraries = { ...state.defaultsLibraries };
     dom.projectRootInput.value = data.project_root;
     dom.indexPathInput.value = data.index_path;
     setStatus(`Loaded project: ${data.project_root}`);
@@ -352,19 +480,21 @@
 
     state.projectRoot = data.project_root;
     state.indexPath = data.index_path;
-    state.externalStyles = Array.isArray(data.external_styles) ? data.external_styles : [];
-    state.externalScripts = Array.isArray(data.external_scripts) ? data.external_scripts : [];
+    state.defaultsLibraries = normalizeRuntimeLibraries(data.defaults_libraries || {});
+    state.runtimeLibraries = { ...state.defaultsLibraries };
     state.selectedRelId = null;
     state.elementsMap = {};
     state.overridesMeta = {};
     state.attributesMeta = {};
     state.linksMeta = {};
     state.addedNodes = [];
+    state.deletedNodes = [];
     state.lastSelection = null;
     state.lastTreeSnapshot = [];
     state.overlayReady = false;
 
     await loadPatchInfo();
+    syncLibraryControlsFromState();
     buildAddPanel();
     clearSelectionUi();
     loadIframe();
@@ -386,42 +516,33 @@
     }
 
     const data = await response.json();
-    const patch = data.patch || {
-      version: 1,
-      project_root: state.projectRoot,
-      index_path: state.indexPath,
-      elements: {},
-      overrides_meta: {},
-      attributes_meta: {},
-      links_meta: {},
-      added_nodes: [],
-    };
+    const normalizedPatch = normalizeLoadedPatch(data.patch);
 
-    state.elementsMap = patch.elements || {};
-    state.overridesMeta = patch.overrides_meta || {};
-    state.attributesMeta = patch.attributes_meta || {};
-    state.linksMeta = patch.links_meta || {};
-    state.addedNodes = Array.isArray(patch.added_nodes) ? patch.added_nodes : [];
+    state.elementsMap = normalizedPatch.elementsMap;
+    state.overridesMeta = normalizedPatch.overridesMeta;
+    state.attributesMeta = normalizedPatch.attributesMeta;
+    state.linksMeta = normalizedPatch.linksMeta;
+    state.addedNodes = normalizedPatch.addedNodes;
+    state.deletedNodes = normalizedPatch.deletedNodes;
+    state.runtimeLibraries = normalizedPatch.runtimeLibraries || { ...state.defaultsLibraries };
 
-    if (
-      Object.keys(state.overridesMeta).length > 0 ||
-      Object.keys(state.attributesMeta).length > 0 ||
-      state.addedNodes.length > 0
-    ) {
+    if (hasPatchContent()) {
       setStatus("Patch loaded");
     }
   }
 
   async function savePatch() {
     const patch = {
-      version: 1,
+      version: PATCH_VERSION,
       project_root: state.projectRoot,
       index_path: state.indexPath,
-      elements: state.elementsMap,
-      overrides_meta: state.overridesMeta,
-      attributes_meta: state.attributesMeta,
-      links_meta: state.linksMeta,
-      added_nodes: state.addedNodes,
+      elementsMap: state.elementsMap,
+      overridesMeta: state.overridesMeta,
+      attributesMeta: state.attributesMeta,
+      linksMeta: state.linksMeta,
+      addedNodes: state.addedNodes,
+      deletedNodes: state.deletedNodes,
+      runtimeLibraries: state.runtimeLibraries,
     };
 
     const overrideCss = buildOverrideCss(state.overridesMeta);
@@ -529,9 +650,27 @@
       return;
     }
 
+    if (msg.type === "REL_NODE_DELETED") {
+      handleNodeDeleted(msg.payload);
+      return;
+    }
+
     if (msg.type === "REL_ATTRIBUTE_ERROR") {
       const details = msg.payload || {};
       setStatus(details.message || "Attribute update failed", true);
+      return;
+    }
+
+    if (msg.type === "REL_DELETE_ERROR") {
+      const details = msg.payload || {};
+      setStatus(details.message || "Delete failed", true);
+      return;
+    }
+
+    if (msg.type === "REL_LIBRARIES_APPLIED") {
+      state.runtimeLibraries = normalizeRuntimeLibraries(msg.payload || state.runtimeLibraries);
+      syncLibraryControlsFromState();
+      buildAddPanel();
     }
   }
 
@@ -553,6 +692,7 @@
     updateAttributesPanel(payload, attrs);
     updateLinkPanel(payload, links);
     updateImagePanel(payload, attrs, overrides);
+    updateDeleteButton(payload);
     markActiveTreeNode(payload.relId);
   }
 
@@ -573,12 +713,15 @@
     dom.imageBorderRadiusInput.value = "";
     dom.imageDisplayInput.value = "";
     dom.imageSettingsSection.classList.add("hidden");
+    dom.deleteElementBtn.disabled = true;
 
     const rows = dom.controlsContainer.querySelectorAll("[data-property]");
     for (const row of rows) {
       const input = row.querySelector("input, select");
       input.value = "";
     }
+
+    markActiveTreeNode("");
   }
 
   function updateSelectionInfo(selection, overrides, attrs, links) {
@@ -651,6 +794,11 @@
     dom.imageObjectFitInput.value = overrides["object-fit"] ?? selection.computed?.["object-fit"] ?? "";
     dom.imageBorderRadiusInput.value = overrides["border-radius"] ?? selection.computed?.["border-radius"] ?? "";
     dom.imageDisplayInput.value = overrides.display ?? selection.computed?.display ?? "";
+  }
+
+  function updateDeleteButton(selection) {
+    const canDelete = Boolean(selection && selection.relId && selection.canDelete !== false);
+    dom.deleteElementBtn.disabled = !canDelete;
   }
 
   function applyStyle(property, value) {
@@ -779,9 +927,46 @@
 
     if (node.relId && node.fallbackSelector) {
       state.elementsMap[node.relId] = node.fallbackSelector;
+      state.deletedNodes = state.deletedNodes.filter((item) => item.relId !== node.relId);
     }
 
     setStatus(`Added node: ${node.type}`);
+  }
+
+  function handleNodeDeleted(payload) {
+    const info = payload && typeof payload === "object" ? payload : {};
+    const relId = String(info.relId || "").trim();
+    const fallbackSelector = String(info.fallbackSelector || "").trim();
+    const timestamp = Number(info.timestamp || Date.now());
+
+    if (!relId && !fallbackSelector) {
+      return;
+    }
+
+    if (relId) {
+      delete state.overridesMeta[relId];
+      delete state.attributesMeta[relId];
+      delete state.linksMeta[relId];
+      state.addedNodes = state.addedNodes.filter((node) => node.relId !== relId);
+      state.elementsMap[relId] = fallbackSelector || state.elementsMap[relId] || "";
+    }
+
+    if (relId) {
+      state.deletedNodes = state.deletedNodes.filter((item) => item.relId !== relId);
+    } else if (fallbackSelector) {
+      state.deletedNodes = state.deletedNodes.filter((item) => item.fallbackSelector !== fallbackSelector);
+    }
+    state.deletedNodes.push({
+      relId,
+      fallbackSelector,
+      timestamp,
+    });
+
+    state.selectedRelId = null;
+    state.lastSelection = null;
+    clearSelectionUi();
+    requestTreeSnapshot();
+    setStatus("Element deleted");
   }
 
   function requestTreeSnapshot() {
@@ -849,6 +1034,8 @@
         attributesMeta: state.attributesMeta,
         linksMeta: state.linksMeta,
         addedNodes: state.addedNodes,
+        deletedNodes: state.deletedNodes,
+        runtimeLibraries: state.runtimeLibraries,
       },
     });
 
@@ -861,6 +1048,45 @@
         });
       }
     }
+  }
+
+  function syncLibraryControlsFromState() {
+    const libs = normalizeRuntimeLibraries(state.runtimeLibraries || state.defaultsLibraries);
+    state.runtimeLibraries = libs;
+    dom.designLibrarySelect.value = libs.designLibrary;
+    dom.iconSetSelect.value = libs.iconSet;
+    dom.animateCssCheckbox.checked = libs.animateCss;
+    dom.bootstrapJsCheckbox.checked = libs.bootstrapJs;
+    dom.bootstrapJsCheckbox.disabled = libs.designLibrary !== "bootstrap";
+  }
+
+  function updateRuntimeLibrariesFromControls() {
+    const libs = normalizeRuntimeLibraries({
+      designLibrary: dom.designLibrarySelect.value,
+      iconSet: dom.iconSetSelect.value,
+      animateCss: dom.animateCssCheckbox.checked,
+      bootstrapJs: dom.bootstrapJsCheckbox.checked,
+    });
+
+    if (libs.designLibrary !== "bootstrap") {
+      libs.bootstrapJs = false;
+    }
+
+    const changed = JSON.stringify(libs) !== JSON.stringify(state.runtimeLibraries);
+    state.runtimeLibraries = libs;
+    syncLibraryControlsFromState();
+    buildAddPanel();
+
+    if (changed) {
+      setStatus("Runtime libraries updated");
+    }
+
+    sendToOverlay({
+      type: "REL_SET_LIBRARIES",
+      payload: {
+        runtimeLibraries: state.runtimeLibraries,
+      },
+    });
   }
 
   function buildOverrideCss(overridesMeta) {
@@ -925,6 +1151,275 @@
 
   function getEffectiveValue(overrideValue, fallbackValue) {
     return typeof overrideValue === "undefined" ? fallbackValue : overrideValue;
+  }
+
+  function normalizeLoadedPatch(rawPatch) {
+    const patch = rawPatch && typeof rawPatch === "object" ? rawPatch : {};
+    const runtimeLibraries =
+      patch.runtimeLibraries ||
+      patch.runtime_libraries ||
+      null;
+
+    return {
+      version: Number(patch.version || 1),
+      elementsMap: ensurePlainObject(patch.elementsMap || patch.elements),
+      overridesMeta: ensurePlainObject(patch.overridesMeta || patch.overrides_meta),
+      attributesMeta: ensurePlainObject(patch.attributesMeta || patch.attributes_meta),
+      linksMeta: ensurePlainObject(patch.linksMeta || patch.links_meta),
+      addedNodes: ensureArray(patch.addedNodes || patch.added_nodes),
+      deletedNodes: ensureArray(patch.deletedNodes || patch.deleted_nodes),
+      runtimeLibraries: runtimeLibraries ? normalizeRuntimeLibraries(runtimeLibraries) : null,
+    };
+  }
+
+  function normalizeRuntimeLibraries(value) {
+    const raw = value && typeof value === "object" ? value : {};
+    const designLibrary = normalizeEnumValue(raw.designLibrary, ["none", "bootstrap", "bulma", "pico", "tailwind"], "none");
+    const iconSet = normalizeEnumValue(raw.iconSet, ["none", "material-icons", "font-awesome"], "none");
+    return {
+      designLibrary,
+      iconSet,
+      animateCss: Boolean(raw.animateCss),
+      bootstrapJs: Boolean(raw.bootstrapJs),
+    };
+  }
+
+  function normalizeEnumValue(input, allowed, fallback) {
+    const value = String(input || "").trim().toLowerCase();
+    return allowed.includes(value) ? value : fallback;
+  }
+
+  function hasPatchContent() {
+    const runtimeDiff = JSON.stringify(normalizeRuntimeLibraries(state.runtimeLibraries)) !== JSON.stringify(normalizeRuntimeLibraries(state.defaultsLibraries));
+    return (
+      Object.keys(state.overridesMeta).length > 0 ||
+      Object.keys(state.attributesMeta).length > 0 ||
+      Object.keys(state.linksMeta).length > 0 ||
+      state.addedNodes.length > 0 ||
+      state.deletedNodes.length > 0 ||
+      runtimeDiff
+    );
+  }
+
+  function ensurePlainObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  }
+
+  function ensureArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
+  function isEditableElement(element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+
+    if (element.closest("input, textarea, select")) {
+      return true;
+    }
+
+    return element.isContentEditable;
+  }
+
+  function initResizableLayout() {
+    const saved = loadLayoutFromStorage();
+    if (saved) {
+      applyLayoutWidths(saved.leftPx, saved.rightPx, false);
+    } else {
+      resetLayoutWidths(false);
+    }
+
+    dom.leftResizer.addEventListener("mousedown", (event) => {
+      beginResize("left", event);
+    });
+
+    dom.rightResizer.addEventListener("mousedown", (event) => {
+      beginResize("right", event);
+    });
+
+    window.addEventListener("resize", () => {
+      const left = state.layout.leftPx;
+      const right = state.layout.rightPx;
+      if (left != null && right != null) {
+        applyLayoutWidths(left, right, false);
+      }
+    });
+  }
+
+  function beginResize(side, event) {
+    if (window.innerWidth <= 1200) {
+      return;
+    }
+
+    event.preventDefault();
+    state.layout.resizeSide = side;
+    state.layout.pendingClientX = event.clientX;
+
+    if (!state.layout.moveHandler) {
+      state.layout.moveHandler = (moveEvent) => {
+        state.layout.pendingClientX = moveEvent.clientX;
+        if (!state.layout.rafId) {
+          state.layout.rafId = window.requestAnimationFrame(() => {
+            state.layout.rafId = 0;
+            applyDragResize();
+          });
+        }
+      };
+    }
+
+    if (!state.layout.upHandler) {
+      state.layout.upHandler = () => {
+        finishResize();
+      };
+    }
+
+    dom.resizeOverlay.classList.remove("hidden");
+    dom.resizeOverlay.addEventListener("mousemove", state.layout.moveHandler, true);
+    dom.resizeOverlay.addEventListener("mouseup", state.layout.upHandler, true);
+    window.addEventListener("mouseup", state.layout.upHandler, true);
+  }
+
+  function applyDragResize() {
+    const rect = dom.layoutRoot.getBoundingClientRect();
+    const side = state.layout.resizeSide;
+    if (!side || rect.width <= 0) {
+      return;
+    }
+
+    const currentLeft = state.layout.leftPx != null ? state.layout.leftPx : rect.width * 0.25;
+    const currentRight = state.layout.rightPx != null ? state.layout.rightPx : rect.width * 0.25;
+
+    if (side === "left") {
+      const requestedLeft = state.layout.pendingClientX - rect.left;
+      applyLayoutWidths(requestedLeft, currentRight, false, "left");
+      return;
+    }
+
+    const requestedRight = rect.right - state.layout.pendingClientX;
+    applyLayoutWidths(currentLeft, requestedRight, false, "right");
+  }
+
+  function finishResize() {
+    dom.resizeOverlay.removeEventListener("mousemove", state.layout.moveHandler, true);
+    dom.resizeOverlay.removeEventListener("mouseup", state.layout.upHandler, true);
+    dom.resizeOverlay.classList.add("hidden");
+    window.removeEventListener("mouseup", state.layout.upHandler, true);
+    state.layout.resizeSide = null;
+    if (state.layout.rafId) {
+      cancelAnimationFrame(state.layout.rafId);
+      state.layout.rafId = 0;
+    }
+    persistLayoutToStorage();
+  }
+
+  function applyLayoutWidths(leftPx, rightPx, save, priority) {
+    const rect = dom.layoutRoot.getBoundingClientRect();
+    if (rect.width <= 0) {
+      return;
+    }
+
+    const normalized = normalizeLayoutWidths(leftPx, rightPx, rect.width, priority || "none");
+    state.layout.leftPx = normalized.leftPx;
+    state.layout.rightPx = normalized.rightPx;
+
+    dom.layoutRoot.style.setProperty("--left-width", `${normalized.leftPx}px`);
+    dom.layoutRoot.style.setProperty("--right-width", `${normalized.rightPx}px`);
+
+    if (save) {
+      persistLayoutToStorage();
+    }
+  }
+
+  function normalizeLayoutWidths(leftPx, rightPx, layoutWidth, priority) {
+    const maxTotal = Math.max(0, layoutWidth - RESIZER_TOTAL_PX - CENTER_MIN_PX);
+    const leftMaxPercent = layoutWidth * 0.45;
+    const rightMaxPercent = layoutWidth * 0.45;
+
+    let left = clamp(leftPx, LEFT_MIN_PX, leftMaxPercent);
+    let right = clamp(rightPx, RIGHT_MIN_PX, rightMaxPercent);
+
+    if (left + right > maxTotal) {
+      const overflow = left + right - maxTotal;
+      if (priority === "left") {
+        right -= overflow;
+      } else if (priority === "right") {
+        left -= overflow;
+      } else {
+        left -= overflow / 2;
+        right -= overflow / 2;
+      }
+    }
+
+    const relaxedLeftMin = Math.min(LEFT_MIN_PX, Math.max(80, maxTotal - RIGHT_MIN_PX));
+    const relaxedRightMin = Math.min(RIGHT_MIN_PX, Math.max(80, maxTotal - LEFT_MIN_PX));
+
+    left = clamp(left, relaxedLeftMin, leftMaxPercent);
+    right = clamp(right, relaxedRightMin, rightMaxPercent);
+
+    if (left + right > maxTotal) {
+      if (priority === "left") {
+        left = Math.max(relaxedLeftMin, maxTotal - right);
+      } else {
+        right = Math.max(relaxedRightMin, maxTotal - left);
+      }
+    }
+
+    return {
+      leftPx: Math.round(Math.max(80, left)),
+      rightPx: Math.round(Math.max(80, right)),
+    };
+  }
+
+  function loadLayoutFromStorage() {
+    try {
+      const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      const leftPx = Number(parsed.leftPx);
+      const rightPx = Number(parsed.rightPx);
+      if (!Number.isFinite(leftPx) || !Number.isFinite(rightPx)) {
+        return null;
+      }
+      return { leftPx, rightPx };
+    } catch {
+      return null;
+    }
+  }
+
+  function persistLayoutToStorage() {
+    if (state.layout.leftPx == null || state.layout.rightPx == null) {
+      return;
+    }
+    localStorage.setItem(
+      LAYOUT_STORAGE_KEY,
+      JSON.stringify({
+        leftPx: state.layout.leftPx,
+        rightPx: state.layout.rightPx,
+      })
+    );
+  }
+
+  function resetLayoutWidths(save) {
+    const rect = dom.layoutRoot.getBoundingClientRect();
+    const width = rect.width || window.innerWidth;
+    const left = width * 0.25;
+    const right = width * 0.25;
+    applyLayoutWidths(left, right, save !== false, "none");
+  }
+
+  function clamp(value, min, max) {
+    const safeMin = Number.isFinite(min) ? min : 0;
+    const safeMax = Number.isFinite(max) ? max : safeMin;
+    const n = Number.isFinite(value) ? value : safeMin;
+    if (safeMax < safeMin) {
+      return safeMin;
+    }
+    return Math.min(safeMax, Math.max(safeMin, n));
   }
 
   function isValidUrl(url) {

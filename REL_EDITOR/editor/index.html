@@ -21,11 +21,40 @@
       <button id="loadProjectBtn" type="button">Load Project</button>
       <button id="savePatchBtn" type="button">Save Patch</button>
       <button id="exportSafeBtn" type="button">Export Safe</button>
+      <button id="resetLayoutBtn" type="button">Reset Layout</button>
+    </div>
+    <div class="libraries-box">
+      <label>
+        Design Library
+        <select id="designLibrarySelect">
+          <option value="none">None</option>
+          <option value="bootstrap">Bootstrap 5</option>
+          <option value="bulma">Bulma</option>
+          <option value="pico">Pico.css</option>
+          <option value="tailwind">Tailwind CDN</option>
+        </select>
+      </label>
+      <label class="inline-check">
+        <input id="bootstrapJsCheckbox" type="checkbox">
+        Bootstrap JS bundle
+      </label>
+      <label>
+        Icon Set
+        <select id="iconSetSelect">
+          <option value="none">None</option>
+          <option value="material-icons">Material Icons</option>
+          <option value="font-awesome">Font Awesome Free</option>
+        </select>
+      </label>
+      <label class="inline-check">
+        <input id="animateCssCheckbox" type="checkbox">
+        Animate.css
+      </label>
     </div>
     <div id="statusText" class="status">Ready</div>
   </header>
 
-  <main class="layout">
+  <main id="layoutRoot" class="layout">
     <section class="panel panel-left">
       <div class="tabs">
         <button class="tab-btn active" data-tab="information" type="button">information</button>
@@ -57,9 +86,13 @@
       </div>
     </section>
 
+    <div id="leftResizer" class="panel-resizer" aria-label="Resize left panel" role="separator"></div>
+
     <section class="panel panel-middle">
       <iframe id="liveFrame" title="Live Preview"></iframe>
     </section>
+
+    <div id="rightResizer" class="panel-resizer" aria-label="Resize right panel" role="separator"></div>
 
     <section class="panel panel-right">
       <h2>Inspector</h2>
@@ -74,6 +107,9 @@
           <span>Class</span>
           <input id="attrClassInput" type="text" placeholder="class-one class-two">
         </label>
+        <div class="danger-row">
+          <button id="deleteElementBtn" class="danger-btn" type="button">Delete Element</button>
+        </div>
       </section>
 
       <section id="linkSettingsSection" class="inspector-section">
@@ -159,6 +195,7 @@
       </section>
     </section>
   </main>
+  <div id="resizeOverlay" class="resize-overlay hidden" aria-hidden="true"></div>
 
   <script src="./editor_app.js"></script>
 </body>

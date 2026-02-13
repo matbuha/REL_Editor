@@ -23,6 +23,7 @@ async function main() {
   let currentIndexPath = (config.default_index_path || "index.html").replace(/\\/g, "/");
   const externalStyles = sanitizeExternalList(config.externalStyles);
   const externalScripts = sanitizeExternalList(config.externalScripts);
+  const defaultsLibraries = normalizeDefaultsLibraries(config.defaultsLibraries);
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -48,6 +49,7 @@ async function main() {
       iframe_src: `/project/${encodePathForUrl(currentIndexPath)}`,
       external_styles: externalStyles,
       external_scripts: externalScripts,
+      defaults_libraries: defaultsLibraries,
     });
   });
 
@@ -76,6 +78,7 @@ async function main() {
         iframe_src: `/project/${encodePathForUrl(currentIndexPath)}`,
         external_styles: externalStyles,
         external_scripts: externalScripts,
+        defaults_libraries: defaultsLibraries,
       });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -98,14 +101,16 @@ async function main() {
     try {
       const body = req.body || {};
       const patch = body.patch || {
-        version: 1,
+        version: 2,
         project_root: currentProjectRoot,
         index_path: currentIndexPath,
-        elements: {},
-        overrides_meta: {},
-        attributes_meta: {},
-        links_meta: {},
-        added_nodes: [],
+        elementsMap: {},
+        overridesMeta: {},
+        attributesMeta: {},
+        linksMeta: {},
+        addedNodes: [],
+        deletedNodes: [],
+        runtimeLibraries: defaultsLibraries,
       };
       const overrideCss = typeof body.override_css === "string" ? body.override_css : "";
 
@@ -280,6 +285,21 @@ function resolveImageExtension(originalName, mimeType) {
   };
 
   return mimeToExt[mimeType] || ".png";
+}
+
+function normalizeDefaultsLibraries(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const designLibrary = String(raw.designLibrary || "none").trim().toLowerCase();
+  const iconSet = String(raw.iconSet || "none").trim().toLowerCase();
+  const animateCss = Boolean(raw.animateCss);
+  const bootstrapJs = Boolean(raw.bootstrapJs);
+
+  return {
+    designLibrary: designLibrary || "none",
+    iconSet: iconSet || "none",
+    animateCss,
+    bootstrapJs,
+  };
 }
 
 main().catch((error) => {

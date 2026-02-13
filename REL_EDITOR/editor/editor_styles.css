@@ -86,8 +86,10 @@ button:hover {
 }
 
 .layout {
+  --left-width: 25%;
+  --right-width: 25%;
   display: grid;
-  grid-template-columns: 25% 50% 25%;
+  grid-template-columns: var(--left-width) 8px minmax(320px, 1fr) 8px var(--right-width);
   width: 100%;
   height: calc(100vh - 66px);
 }
@@ -100,6 +102,7 @@ button:hover {
 
 .panel-middle {
   background: var(--frame);
+  grid-column: 3;
 }
 
 .panel-right,
@@ -108,13 +111,87 @@ button:hover {
   overflow: auto;
 }
 
+.panel-left {
+  grid-column: 1;
+}
+
 .panel-right {
+  grid-column: 5;
   border-right: none;
   border-left: 1px solid var(--line);
 }
 
 .panel-right h2 {
   margin-top: 0;
+}
+
+.libraries-box {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px 8px;
+}
+
+.libraries-box label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.libraries-box select {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.inline-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+  margin-top: 14px;
+  white-space: nowrap;
+}
+
+.panel-resizer {
+  width: 8px;
+  background: linear-gradient(180deg, #ebdfcf 0%, #dcccb8 100%);
+  cursor: col-resize;
+  position: relative;
+  user-select: none;
+}
+
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 46px;
+  border-radius: 3px;
+  background: #bcae9b;
+}
+
+#leftResizer {
+  grid-column: 2;
+}
+
+#rightResizer {
+  grid-column: 4;
+}
+
+.resize-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  cursor: col-resize;
+  background: transparent;
 }
 
 .tabs {
@@ -241,6 +318,16 @@ button:hover {
   font-size: 12px;
 }
 
+.danger-row {
+  margin-top: 8px;
+}
+
+.danger-btn {
+  border-color: #cc7a6b;
+  color: #8e2f26;
+  background: #fff0ed;
+}
+
 .upload-row {
   display: flex;
   justify-content: flex-start;
@@ -304,9 +391,16 @@ button:hover {
 
 @media (max-width: 1200px) {
   .layout {
+    display: grid;
     grid-template-columns: 1fr;
     grid-template-rows: 280px minmax(300px, 1fr) 320px;
     height: calc(100vh - 90px);
+  }
+
+  .panel-left,
+  .panel-middle,
+  .panel-right {
+    grid-column: 1;
   }
 
   .panel {
@@ -324,5 +418,14 @@ button:hover {
 
   .project-picker {
     flex-wrap: wrap;
+  }
+
+  .libraries-box {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .panel-resizer {
+    display: none;
   }
 }

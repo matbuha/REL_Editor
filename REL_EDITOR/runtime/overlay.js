@@ -36,6 +36,35 @@
   const VOID_TAGS = new Set(["IMG", "INPUT", "BR", "HR", "META", "LINK", "SOURCE", "TRACK", "WBR"]);
   const MANAGED_SELECTION_CLASS = "rel-editor-selected";
   const MANAGED_DROP_CLASS = "rel-editor-drop-target";
+  const PROTECTED_TAGS = new Set(["HTML", "HEAD", "BODY"]);
+
+  const LIBRARY_ASSETS = {
+    bootstrap: {
+      styles: ["https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"],
+      scripts: ["https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"],
+    },
+    bulma: {
+      styles: ["https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css"],
+      scripts: [],
+    },
+    pico: {
+      styles: ["https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"],
+      scripts: [],
+    },
+    tailwind: {
+      styles: [],
+      scripts: ["https://cdn.tailwindcss.com"],
+    },
+    icons: {
+      "material-icons": {
+        styles: ["https://fonts.googleapis.com/icon?family=Material+Icons"],
+      },
+      "font-awesome": {
+        styles: ["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"],
+      },
+    },
+    animateCss: "https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css",
+  };
 
   const state = {
     selectedElement: null,
@@ -45,6 +74,12 @@
     activeDropTarget: null,
     elementsMap: {},
     appliedAddedNodeIds: new Set(),
+    runtimeLibraries: {
+      designLibrary: "none",
+      iconSet: "none",
+      animateCss: false,
+      bootstrapJs: false,
+    },
   };
 
   document.addEventListener("click", onDocumentClick, true);
@@ -85,6 +120,30 @@
       event.preventDefault();
       clearSelection();
       postToEditor({ type: "REL_SELECTION_CLEARED" });
+      return;
+    }
+
+    if (event.key === "Delete" || event.key === "Backspace") {
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (!state.selectedElement) {
+        return;
+      }
+
+      const allow = window.confirm("Delete selected element?");
+      if (!allow) {
+        return;
+      }
+
+      deleteNodeByReference({
+        relId: ensureRelId(state.selectedElement),
+        fallbackSelector: buildFallbackSelector(state.selectedElement),
+        silent: false,
+      });
     }
   }
 
@@ -170,6 +229,22 @@
       return;
     }
 
+    if (message.type === "REL_DELETE_NODE") {
+      const payload = message.payload || {};
+      deleteNodeByReference({
+        relId: payload.relId,
+        fallbackSelector: payload.fallbackSelector,
+        silent: false,
+      });
+      return;
+    }
+
+    if (message.type === "REL_SET_LIBRARIES") {
+      const payload = message.payload || {};
+      applyRuntimeLibraries(payload.runtimeLibraries || {});
+      return;
+    }
+
     if (message.type === "REL_REQUEST_TREE") {
       postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
       return;
@@ -219,6 +294,7 @@
   function applyPatch(payload) {
     state.elementsMap = payload.elementsMap || {};
     state.appliedAddedNodeIds.clear();
+    applyRuntimeLibraries(payload.runtimeLibraries || state.runtimeLibraries);
 
     const addedNodes = Array.isArray(payload.addedNodes) ? payload.addedNodes : [];
     for (const node of addedNodes) {
@@ -235,6 +311,15 @@
       applyLinkSettings(relId, linksMeta[relId], { silent: true });
     }
 
+    const deletedNodes = Array.isArray(payload.deletedNodes) ? payload.deletedNodes : [];
+    for (const node of deletedNodes) {
+      deleteNodeByReference({
+        relId: node && node.relId,
+        fallbackSelector: node && node.fallbackSelector,
+        silent: true,
+      });
+    }
+
     if (state.selectedElement) {
       const relId = ensureRelId(state.selectedElement);
       postToEditor({ type: "REL_SELECTION", payload: buildSelectionPayload(state.selectedElement, relId) });
@@ -248,6 +333,72 @@
       state.selectedElement.classList.remove(MANAGED_SELECTION_CLASS);
       state.selectedElement = null;
     }
+  }
+
+  function deleteNodeByReference(options) {
+    const relId = String(options.relId || "").trim();
+    const fallbackSelector = String(options.fallbackSelector || "").trim();
+    const silent = Boolean(options.silent);
+
+    let element = relId ? findElementByRelIdOrFallback(relId, state.elementsMap) : null;
+    if (!element && fallbackSelector) {
+      try {
+        element = document.querySelector(fallbackSelector);
+      } catch {
+        element = null;
+      }
+    }
+
+    if (!element) {
+      return false;
+    }
+
+    if (isProtectedElement(element)) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_DELETE_ERROR",
+          payload: {
+            relId: relId || ensureRelId(element),
+            message: "This element is protected and cannot be deleted",
+          },
+        });
+      }
+      return false;
+    }
+
+    const parent = element.parentNode;
+    if (!parent) {
+      return false;
+    }
+
+    const finalRelId = ensureRelId(element, relId);
+    const finalFallback = buildFallbackSelector(element);
+    const deletedNodeId = element.dataset.relAddedNodeId || "";
+
+    if (state.selectedElement === element) {
+      clearSelection();
+      postToEditor({ type: "REL_SELECTION_CLEARED" });
+    }
+
+    parent.removeChild(element);
+
+    if (deletedNodeId) {
+      state.appliedAddedNodeIds.delete(deletedNodeId);
+    }
+
+    if (!silent) {
+      postToEditor({
+        type: "REL_NODE_DELETED",
+        payload: {
+          relId: finalRelId,
+          fallbackSelector: finalFallback,
+          timestamp: Date.now(),
+        },
+      });
+      postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    }
+
+    return true;
   }
 
   function selectElement(element) {
@@ -647,6 +798,29 @@
         return createBootstrapGrid();
       case "bootstrap-navbar":
         return createBootstrapNavbar();
+      case "bulma-button": {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "button is-primary";
+        btn.textContent = props.text || "Bulma Button";
+        return btn;
+      }
+      case "bulma-card":
+        return createBulmaCard();
+      case "pico-button": {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "contrast";
+        btn.textContent = props.text || "Pico Button";
+        return btn;
+      }
+      case "pico-link": {
+        const link = document.createElement("a");
+        link.href = props.href || "#";
+        link.className = "contrast";
+        link.textContent = props.text || "Pico Link";
+        return link;
+      }
       default:
         return createTextNodeElement("div", props.text || "New element");
     }
@@ -737,6 +911,26 @@
     return nav;
   }
 
+  function createBulmaCard() {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const cardContent = document.createElement("div");
+    cardContent.className = "card-content";
+
+    const title = document.createElement("p");
+    title.className = "title is-5";
+    title.textContent = "Bulma Card";
+
+    const text = document.createElement("p");
+    text.textContent = "Card content";
+
+    cardContent.appendChild(title);
+    cardContent.appendChild(text);
+    card.appendChild(cardContent);
+    return card;
+  }
+
   function buildSelectionPayload(element, relId) {
     const computed = window.getComputedStyle(element);
     const rect = element.getBoundingClientRect();
@@ -781,6 +975,7 @@
       link: linkContext,
       isImage: element.tagName === "IMG",
       isAnchor: element.tagName === "A",
+      canDelete: !isProtectedElement(element),
       computed: computedSubset,
     };
   }
@@ -977,6 +1172,23 @@
     return true;
   }
 
+  function isProtectedElement(element) {
+    if (!(element instanceof Element)) {
+      return true;
+    }
+    return PROTECTED_TAGS.has(element.tagName);
+  }
+
+  function isEditableTarget(target) {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    if (target.closest("input, textarea, select")) {
+      return true;
+    }
+    return target.isContentEditable;
+  }
+
   function setActiveDropTarget(target) {
     if (state.activeDropTarget === target) {
       return;
@@ -1012,6 +1224,126 @@
       },
       true
     );
+  }
+
+  function applyRuntimeLibraries(rawLibraries) {
+    const libraries = normalizeRuntimeLibraries(rawLibraries);
+    clearInjectedLibraries();
+
+    const assets = collectLibraryAssets(libraries);
+    for (const asset of assets) {
+      if (asset.type === "style") {
+        if (hasAssetAlready("style", asset.url)) {
+          continue;
+        }
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = asset.url;
+        link.dataset.relLib = asset.key;
+        link.dataset.relLibType = "style";
+        link.dataset.relLibManaged = "1";
+        document.head.appendChild(link);
+        continue;
+      }
+
+      if (asset.type === "script") {
+        if (hasAssetAlready("script", asset.url)) {
+          continue;
+        }
+        const script = document.createElement("script");
+        script.src = asset.url;
+        script.dataset.relLib = asset.key;
+        script.dataset.relLibType = "script";
+        script.dataset.relLibManaged = "1";
+        document.head.appendChild(script);
+      }
+    }
+
+    state.runtimeLibraries = libraries;
+    postToEditor({ type: "REL_LIBRARIES_APPLIED", payload: libraries });
+  }
+
+  function clearInjectedLibraries() {
+    const nodes = document.querySelectorAll('[data-rel-lib-managed="1"]');
+    for (const node of nodes) {
+      node.remove();
+    }
+  }
+
+  function collectLibraryAssets(libraries) {
+    const assets = [];
+    const designLibrary = libraries.designLibrary;
+
+    if (designLibrary && designLibrary !== "none" && LIBRARY_ASSETS[designLibrary]) {
+      const entry = LIBRARY_ASSETS[designLibrary];
+      for (const url of entry.styles || []) {
+        assets.push({ type: "style", key: `${designLibrary}-style`, url });
+      }
+      for (const url of entry.scripts || []) {
+        if (designLibrary === "bootstrap" && !libraries.bootstrapJs) {
+          continue;
+        }
+        assets.push({ type: "script", key: `${designLibrary}-script`, url });
+      }
+    }
+
+    const iconSet = libraries.iconSet;
+    if (iconSet && iconSet !== "none" && LIBRARY_ASSETS.icons[iconSet]) {
+      const iconStyles = LIBRARY_ASSETS.icons[iconSet].styles || [];
+      for (const url of iconStyles) {
+        assets.push({ type: "style", key: `${iconSet}-icon`, url });
+      }
+    }
+
+    if (libraries.animateCss) {
+      assets.push({ type: "style", key: "animate-css", url: LIBRARY_ASSETS.animateCss });
+    }
+
+    return assets;
+  }
+
+  function normalizeRuntimeLibraries(value) {
+    const raw = value && typeof value === "object" ? value : {};
+    return {
+      designLibrary: normalizeEnum(raw.designLibrary, ["none", "bootstrap", "bulma", "pico", "tailwind"], "none"),
+      iconSet: normalizeEnum(raw.iconSet, ["none", "material-icons", "font-awesome"], "none"),
+      animateCss: Boolean(raw.animateCss),
+      bootstrapJs: Boolean(raw.bootstrapJs),
+    };
+  }
+
+  function normalizeEnum(value, allowed, fallback) {
+    const text = String(value || "").trim().toLowerCase();
+    return allowed.includes(text) ? text : fallback;
+  }
+
+  function hasAssetAlready(type, url) {
+    const absolute = toAbsoluteUrl(url);
+    if (type === "style") {
+      const links = document.querySelectorAll('link[rel="stylesheet"]');
+      for (const link of links) {
+        if (toAbsoluteUrl(link.href) === absolute) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    const scripts = document.querySelectorAll("script[src]");
+    for (const script of scripts) {
+      if (toAbsoluteUrl(script.src) === absolute) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(url) {
+    try {
+      return new URL(url, document.baseURI).href;
+    } catch {
+      return String(url || "");
+    }
   }
 
   function normalizeClassString(value) {

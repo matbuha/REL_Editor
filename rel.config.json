@@ -3,5 +3,11 @@
   "default_project_root": "./demo_project",
   "default_index_path": "index.html",
   "externalStyles": [],
-  "externalScripts": []
+  "externalScripts": [],
+  "defaultsLibraries": {
+    "designLibrary": "none",
+    "iconSet": "none",
+    "animateCss": false,
+    "bootstrapJs": false
+  }
 }
