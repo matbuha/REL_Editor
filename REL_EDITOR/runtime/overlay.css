@@ -1,10 +1,116 @@
 .rel-editor-selected {
   outline: 2px solid #ff6a00 !important;
   outline-offset: 1px !important;
-  cursor: crosshair !important;
 }
 
 .rel-editor-drop-target {
   outline: 2px dashed #0082c8 !important;
   outline-offset: 2px !important;
+}
+
+.rel-resize-overlay {
+  position: fixed;
+  z-index: 2147483600;
+  border: 1px solid #ff6a00;
+  box-sizing: border-box;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.rel-resize-overlay.is-visible {
+  opacity: 1;
+}
+
+.rel-resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 1px solid #ff6a00;
+  background: #ffffff;
+  border-radius: 2px;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.rel-resize-handle[data-dir="n"] {
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+
+.rel-resize-handle[data-dir="s"] {
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+
+.rel-resize-handle[data-dir="e"] {
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+
+.rel-resize-handle[data-dir="w"] {
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+
+.rel-resize-handle[data-dir="nw"] {
+  left: -6px;
+  top: -6px;
+  cursor: nwse-resize;
+}
+
+.rel-resize-handle[data-dir="se"] {
+  right: -6px;
+  bottom: -6px;
+  cursor: nwse-resize;
+}
+
+.rel-resize-handle[data-dir="ne"] {
+  right: -6px;
+  top: -6px;
+  cursor: nesw-resize;
+}
+
+.rel-resize-handle[data-dir="sw"] {
+  left: -6px;
+  bottom: -6px;
+  cursor: nesw-resize;
+}
+
+.rel-resize-tooltip {
+  position: fixed;
+  z-index: 2147483601;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #ffffff;
+  font: 12px/1.2 monospace;
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(0, -8px);
+  transition: opacity 90ms ease-out;
+}
+
+.rel-resize-tooltip.is-visible {
+  opacity: 1;
+}
+
+body.rel-resizing * {
+  user-select: none !important;
+  pointer-events: none !important;
+}
+
+body.rel-resizing .rel-resize-overlay,
+body.rel-resizing .rel-resize-overlay *,
+body.rel-resizing .rel-resize-tooltip {
+  pointer-events: auto !important;
 }

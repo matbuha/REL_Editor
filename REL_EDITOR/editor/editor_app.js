@@ -2245,7 +2245,8 @@
     }
   }
 
-  async function savePatch() {
+  async function savePatch(options) {
+    const opts = options && typeof options === "object" ? options : {};
     const patch = {
       version: PATCH_VERSION,
       project_root: state.projectRoot,
@@ -2277,7 +2278,105 @@
       return;
     }
 
-    setStatus("Patch saved");
+    if (!opts.silent) {
+      const successMessage = String(opts.successMessage || "").trim();
+      setStatus(successMessage || "Patch saved");
+    }
+  }
+
+  function handleResizeSyncMessage(payload) {
+    const safePayload = payload && typeof payload === "object" ? payload : {};
+    const relId = String(safePayload.relId || "").trim();
+    if (!relId) {
+      return;
+    }
+
+    const phase = String(safePayload.phase || "preview").trim().toLowerCase() === "commit"
+      ? "commit"
+      : "preview";
+    const before = ensurePlainObject(safePayload.before);
+    const after = ensurePlainObject(safePayload.after);
+    if (Object.keys(after).length === 0) {
+      return;
+    }
+
+    applyResizeOverride(relId, before, after, { phase });
+    if (phase === "commit") {
+      savePatch({ silent: true }).catch((error) => {
+        setStatus(`Resize save failed: ${error.message || "Unknown error"}`, true);
+      });
+    }
+  }
+
+  function applyResizeOverride(relId, before, after, options) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+
+    // Keep before/after in this API for future undo/redo integration.
+    const beforeState = ensurePlainObject(before);
+    const afterState = ensurePlainObject(after);
+    const phase = String(options && options.phase ? options.phase : "preview").toLowerCase();
+    if (!state.overridesMeta[safeRelId]) {
+      state.overridesMeta[safeRelId] = {};
+    }
+
+    for (const [property, value] of Object.entries(afterState)) {
+      const safeProperty = String(property || "").trim();
+      if (!safeProperty) {
+        continue;
+      }
+
+      const normalizedValue = normalizeRgbaAlphaInCssValue(String(value ?? ""));
+      if (normalizedValue.trim() === "") {
+        delete state.overridesMeta[safeRelId][safeProperty];
+      } else {
+        state.overridesMeta[safeRelId][safeProperty] = normalizedValue;
+      }
+    }
+
+    if (Object.keys(state.overridesMeta[safeRelId]).length === 0) {
+      delete state.overridesMeta[safeRelId];
+    }
+
+    if (state.selectedRelId !== safeRelId || !state.lastSelection) {
+      return;
+    }
+
+    if (!state.lastSelection.computed || typeof state.lastSelection.computed !== "object") {
+      state.lastSelection.computed = {};
+    }
+
+    for (const [property, value] of Object.entries(afterState)) {
+      const safeProperty = String(property || "").trim();
+      if (!safeProperty) {
+        continue;
+      }
+      state.lastSelection.computed[safeProperty] = String(value ?? "");
+    }
+
+    if (phase === "commit") {
+      state.lastSelection.resizeBefore = beforeState;
+      state.lastSelection.resizeAfter = afterState;
+    }
+
+    updateStyleControlValues(
+      state.lastSelection.computed,
+      state.overridesMeta[safeRelId] || {},
+      {
+        selectionChanged: false,
+        relId: safeRelId,
+        selection: state.lastSelection,
+      }
+    );
+
+    updateSelectionInfo(
+      state.lastSelection,
+      state.overridesMeta[safeRelId] || {},
+      state.attributesMeta[safeRelId] || {},
+      state.linksMeta[safeRelId] || {}
+    );
   }
 
   async function exportSafe() {
@@ -2406,6 +2505,11 @@
     }
 
     if (msg.type === "REL_THEME_APPLIED") {
+      return;
+    }
+
+    if (msg.type === "REL_RESIZE_SYNC") {
+      handleResizeSyncMessage(msg.payload || {});
       return;
     }
   }

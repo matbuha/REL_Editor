@@ -44,6 +44,7 @@
   const VOID_TAGS = new Set(["IMG", "INPUT", "BR", "HR", "META", "LINK", "SOURCE", "TRACK", "WBR"]);
   const MANAGED_SELECTION_CLASS = "rel-editor-selected";
   const MANAGED_DROP_CLASS = "rel-editor-drop-target";
+  const RESIZER_SELECTION_EVENT = "rel-selection-change";
   const PROTECTED_TAGS = new Set(["HTML", "HEAD", "BODY"]);
   const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV"]);
 
@@ -96,6 +97,7 @@
     themeCss: "",
   };
 
+  ensureResizerModuleLoaded();
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("keydown", onDocumentKeyDown, true);
   document.addEventListener("dragover", onDocumentDragOver, true);
@@ -375,6 +377,7 @@
     if (state.selectedElement) {
       state.selectedElement.classList.remove(MANAGED_SELECTION_CLASS);
       state.selectedElement = null;
+      notifyResizerSelectionChange(null);
     }
   }
 
@@ -461,6 +464,7 @@
     const relId = ensureRelId(element);
     element.classList.add(MANAGED_SELECTION_CLASS);
     state.selectedElement = element;
+    notifyResizerSelectionChange(element);
 
     const payload = buildSelectionPayload(element, relId);
     postToEditor({ type: "REL_SELECTION", payload });
@@ -1612,6 +1616,29 @@
     }
 
     return assets;
+  }
+
+  function notifyResizerSelectionChange(element) {
+    window.dispatchEvent(new CustomEvent(RESIZER_SELECTION_EVENT, {
+      detail: {
+        element: element instanceof Element ? element : null,
+      },
+    }));
+  }
+
+  function ensureResizerModuleLoaded() {
+    if (document.querySelector('script[data-rel-runtime="resizer-js"]')) {
+      return;
+    }
+    if (!document.head) {
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "/runtime/resizer.js";
+    script.dataset.relRuntime = "resizer-js";
+    script.async = false;
+    document.head.appendChild(script);
   }
 
   function applyRuntimeFonts(rawFonts) {
