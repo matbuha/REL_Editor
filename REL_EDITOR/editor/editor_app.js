@@ -44,6 +44,7 @@
         { label: "letter-spacing", property: "letter-spacing", type: "text", placeholder: "0px" },
         { label: "text-transform", property: "text-transform", type: "select", options: ["", "none", "uppercase", "lowercase", "capitalize"] },
         { label: "text-decoration", property: "text-decoration", type: "select", options: ["", "none", "underline", "overline", "line-through"] },
+        { label: "vertical-align-content", type: "vertical-align-content" },
       ],
     },
     {
@@ -122,6 +123,15 @@
     strong: "0px 12px 30px 0px rgba(15, 23, 42, 0.28)",
     inner: "inset 0px 2px 8px 0px rgba(15, 23, 42, 0.2)",
   };
+
+  const BORDER_BOX_TRIGGER_PROPS = new Set([
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "width",
+    "height",
+  ]);
 
   const KNOWN_SYSTEM_FAMILIES = new Set(
     SYSTEM_FONT_CHOICES.map((item) => item.family.toLowerCase())
@@ -228,6 +238,7 @@
       backgroundSolidInput: null,
       backgroundGradientInput: null,
       backgroundPreview: null,
+      verticalAlignSelect: null,
       pendingUnloadedFontFamily: "",
       shadowRoot: null,
       shadowEnabledInput: null,
@@ -1121,6 +1132,7 @@
     state.controls.backgroundSolidInput = null;
     state.controls.backgroundGradientInput = null;
     state.controls.backgroundPreview = null;
+    state.controls.verticalAlignSelect = null;
     state.controls.shadowRoot = null;
     state.controls.shadowEnabledInput = null;
     state.controls.shadowTargetInput = null;
@@ -1154,6 +1166,10 @@
           buildFontFamilyControl(sectionRoot, control);
           continue;
         }
+        if (control.type === "vertical-align-content") {
+          buildVerticalAlignControl(sectionRoot, control);
+          continue;
+        }
         if (control.type === "shadow") {
           buildShadowControl(sectionRoot);
           continue;
@@ -1167,6 +1183,10 @@
     rebuildFontFamilyOptions("");
     updateBackgroundControlVisibility();
     updateBackgroundPreview();
+    if (state.controls.verticalAlignSelect) {
+      state.controls.verticalAlignSelect.value = "";
+      state.controls.verticalAlignSelect.disabled = true;
+    }
   }
 
   function buildSimpleStyleControl(container, control) {
@@ -1242,6 +1262,38 @@
     state.controls.fontFamilyWarning = warning;
     state.controls.fontFamilyWarningText = warningText;
     state.controls.fontFamilyAutoLoadBtn = button;
+  }
+
+  function buildVerticalAlignControl(container, control) {
+    const row = document.createElement("label");
+    row.className = "control-item";
+    row.setAttribute("data-property", "vertical-align-content");
+
+    const caption = document.createElement("span");
+    caption.textContent = control.label;
+
+    const select = document.createElement("select");
+    const options = [
+      { value: "", label: "(empty)" },
+      { value: "top", label: "top" },
+      { value: "center", label: "center" },
+      { value: "bottom", label: "bottom" },
+    ];
+    for (const optionDef of options) {
+      const option = document.createElement("option");
+      option.value = optionDef.value;
+      option.textContent = optionDef.label;
+      select.appendChild(option);
+    }
+
+    select.addEventListener("change", () => {
+      applyVerticalAlignContent(select.value);
+    });
+
+    row.appendChild(caption);
+    row.appendChild(select);
+    container.appendChild(row);
+    state.controls.verticalAlignSelect = select;
   }
 
   function buildBackgroundControl(container) {
@@ -1382,12 +1434,13 @@
 
     if (state.controls.backgroundType === "gradient") {
       const gradientValue = String(state.controls.backgroundGradientInput?.value || "").trim();
-      applyStyle("background-color", "");
+      applyStyle("background-image", "");
       applyStyle("background", gradientValue);
     } else {
       const solidValue = String(state.controls.backgroundSolidInput?.value || "").trim();
-      applyStyle("background", "");
-      applyStyle("background-color", solidValue);
+      applyStyle("background", solidValue);
+      applyStyle("background-image", "none");
+      applyStyle("background-color", "");
     }
     updateBackgroundPreview();
   }
@@ -1413,6 +1466,103 @@
     if (colorValue) {
       preview.style.backgroundColor = colorValue;
     }
+  }
+
+  function applyVerticalAlignContent(mode) {
+    if (!state.selectedRelId) {
+      return;
+    }
+
+    const selectedMode = String(mode || "").trim().toLowerCase();
+    const alignItemsValue = mapVerticalAlignModeToAlignItems(selectedMode);
+    if (!alignItemsValue) {
+      applyStyle("align-items", "");
+      return;
+    }
+
+    const relId = state.selectedRelId;
+    const overrides = state.overridesMeta[relId] || {};
+    const computed = (state.lastSelection && state.lastSelection.computed) || {};
+    const effectiveDisplay = getEffectiveDisplayForVerticalAlign(overrides, computed);
+
+    if (isFlexOrGridDisplay(effectiveDisplay)) {
+      applyStyle("align-items", alignItemsValue);
+      return;
+    }
+
+    if (!canPromoteToFlexForVerticalAlign(state.lastSelection || {})) {
+      setStatus("Vertical align requires a simple text element or existing flex/grid container", true);
+      updateVerticalAlignControlForSelection(state.lastSelection || {}, computed, overrides);
+      return;
+    }
+
+    const nextDisplay = /^inline/i.test(effectiveDisplay) ? "inline-flex" : "flex";
+    applyStyle("display", nextDisplay);
+    applyStyle("align-items", alignItemsValue);
+  }
+
+  function updateVerticalAlignControlForSelection(selection, computed, overrides) {
+    const select = state.controls.verticalAlignSelect;
+    if (!select) {
+      return;
+    }
+
+    const safeComputed = computed && typeof computed === "object" ? computed : {};
+    const safeOverrides = overrides && typeof overrides === "object" ? overrides : {};
+    const effectiveDisplay = getEffectiveDisplayForVerticalAlign(safeOverrides, safeComputed);
+    const canUse = isFlexOrGridDisplay(effectiveDisplay) || canPromoteToFlexForVerticalAlign(selection || {});
+    select.disabled = !canUse;
+    select.value = resolveVerticalAlignControlValue(safeOverrides, safeComputed);
+  }
+
+  function getEffectiveDisplayForVerticalAlign(overrides, computed) {
+    return String(overrides.display ?? computed.display ?? "").trim().toLowerCase();
+  }
+
+  function isFlexOrGridDisplay(displayValue) {
+    const normalized = String(displayValue || "").trim().toLowerCase();
+    return ["flex", "inline-flex", "grid", "inline-grid"].includes(normalized);
+  }
+
+  function canPromoteToFlexForVerticalAlign(selection) {
+    const tag = String(selection?.tagName || "").toLowerCase();
+    if (!tag) {
+      return false;
+    }
+    if (["button", "a", "input", "label", "p", "li", "h1", "h2", "h3", "h4", "h5", "h6"].includes(tag)) {
+      return true;
+    }
+    if (["div", "span"].includes(tag)) {
+      return Boolean(selection?.textInfo?.canEdit);
+    }
+    return false;
+  }
+
+  function mapVerticalAlignModeToAlignItems(mode) {
+    if (mode === "top") {
+      return "flex-start";
+    }
+    if (mode === "center") {
+      return "center";
+    }
+    if (mode === "bottom") {
+      return "flex-end";
+    }
+    return "";
+  }
+
+  function resolveVerticalAlignControlValue(overrides, computed) {
+    const raw = String(overrides["align-items"] ?? computed["align-items"] ?? "").trim().toLowerCase();
+    if (raw === "flex-start") {
+      return "top";
+    }
+    if (raw === "center") {
+      return "center";
+    }
+    if (raw === "flex-end") {
+      return "bottom";
+    }
+    return "";
   }
 
   function buildShadowControl(container) {
@@ -2349,6 +2499,10 @@
     setBackgroundType("solid", true);
     updateFontLoadingWarning("");
     updateBackgroundPreview();
+    if (state.controls.verticalAlignSelect) {
+      state.controls.verticalAlignSelect.value = "";
+      state.controls.verticalAlignSelect.disabled = true;
+    }
     if (state.controls.shadowEnabledInput) {
       state.controls.shadowModeUpdating = true;
       state.controls.shadowEnabledInput.checked = false;
@@ -2426,7 +2580,9 @@
     }
 
     const gradientValue = overrideBackground || computedBackground || (isGradientValue(computedBackgroundImage) ? computedBackgroundImage : "");
-    const colorValue = overrideBackgroundColor || computedBackgroundColor;
+    const colorValue = overrideBackgroundColor ||
+      (!isGradientValue(overrideBackground) ? overrideBackground : "") ||
+      computedBackgroundColor;
     if (state.controls.backgroundGradientInput) {
       if (nextMode === "gradient") {
         state.controls.backgroundGradientInput.value = gradientValue;
@@ -2443,6 +2599,7 @@
     }
 
     updateBackgroundPreview();
+    updateVerticalAlignControlForSelection(options?.selection || state.lastSelection || {}, computed, overrides);
     updateShadowControlValues(computed, overrides, options?.selection || state.lastSelection || {}, options || {});
   }
 
@@ -2541,6 +2698,7 @@
     } else {
       state.overridesMeta[relId][property] = normalizedValue;
     }
+    const borderBoxPayload = ensureBorderBoxOverrideForSizing(relId, property, trimmedValue);
 
     if (Object.keys(state.overridesMeta[relId]).length === 0) {
       delete state.overridesMeta[relId];
@@ -2550,6 +2708,12 @@
       type: "REL_APPLY_STYLE",
       payload: { relId, property, value: trimmedValue ? normalizedValue : "" },
     });
+    if (borderBoxPayload) {
+      sendToOverlay({
+        type: "REL_APPLY_STYLE",
+        payload: borderBoxPayload,
+      });
+    }
 
     if (state.lastSelection) {
       updateSelectionInfo(
@@ -2559,6 +2723,32 @@
         state.linksMeta[relId] || {}
       );
     }
+  }
+
+  function ensureBorderBoxOverrideForSizing(relId, property, value) {
+    const safeProperty = String(property || "").trim().toLowerCase();
+    if (!BORDER_BOX_TRIGGER_PROPS.has(safeProperty)) {
+      return null;
+    }
+    if (!String(value || "").trim()) {
+      return null;
+    }
+
+    if (!state.overridesMeta[relId]) {
+      state.overridesMeta[relId] = {};
+    }
+
+    const existing = String(state.overridesMeta[relId]["box-sizing"] ?? "").trim().toLowerCase();
+    if (existing === "border-box") {
+      return null;
+    }
+
+    state.overridesMeta[relId]["box-sizing"] = "border-box";
+    return {
+      relId,
+      property: "box-sizing",
+      value: "border-box",
+    };
   }
 
   function applyAttributeEdit(field, rawValue) {
@@ -3439,9 +3629,16 @@
 
   function detectBackgroundMode(overrides, computed) {
     const overrideBackground = String(overrides.background ?? "").trim();
+    const overrideBackgroundImage = String(overrides["background-image"] ?? "").trim();
     const computedBackgroundImage = String(computed["background-image"] ?? "").trim();
+    if (isGradientValue(overrideBackgroundImage)) {
+      return "gradient";
+    }
     if (isGradientValue(overrideBackground)) {
       return "gradient";
+    }
+    if (overrideBackgroundImage.toLowerCase() === "none") {
+      return "solid";
     }
     if (!overrideBackground && isGradientValue(computedBackgroundImage)) {
       return "gradient";
