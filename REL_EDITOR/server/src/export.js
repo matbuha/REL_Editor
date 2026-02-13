@@ -2,11 +2,18 @@ const path = require("path");
 const fs = require("fs/promises");
 const { parseHTML } = require("linkedom");
 const { readPatch } = require("./file_io");
+const { PROJECT_TYPE_VITE_REACT_STYLE, normalizeProjectType } = require("./vite_runner");
 
 const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV"]);
 const LINK_ATTRIBUTE_KEYS = ["href", "target", "rel", "title"];
 
-async function exportSafe(projectRoot, indexPath) {
+async function exportSafe(projectRoot, indexPath, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const projectType = normalizeProjectType(opts.projectType);
+  if (projectType === PROJECT_TYPE_VITE_REACT_STYLE) {
+    return exportSafeViteReactStyle(projectRoot);
+  }
+
   const sourceIndexPath = path.resolve(projectRoot, indexPath);
   const sourceDir = path.dirname(sourceIndexPath);
   const sourceFileName = path.basename(sourceIndexPath);
@@ -21,8 +28,8 @@ async function exportSafe(projectRoot, indexPath) {
   const patchResult = await safeReadPatchForExport(projectRoot);
   const patch = ensurePlainObject(patchResult.patch);
 
-  const exportCss = buildExportCss(patch, patchResult.overrideCss || "");
-  await fs.writeFile(relCssPath, exportCss, "utf8");
+  const cssResult = buildExportCssWithReport(patch, patchResult.overrideCss || "");
+  await fs.writeFile(relCssPath, cssResult.css, "utf8");
 
   const exportedHtml = buildExportHtml(htmlRaw, patch, sourceDir, relCssPath);
   await fs.writeFile(relHtmlPath, exportedHtml, "utf8");
@@ -31,6 +38,32 @@ async function exportSafe(projectRoot, indexPath) {
     mode: "safe",
     html: relHtmlPath,
     css: relCssPath,
+    export_report: cssResult.report,
+  };
+}
+
+async function exportSafeViteReactStyle(projectRoot) {
+  const patchResult = await safeReadPatchForExport(projectRoot);
+  const patch = ensurePlainObject(patchResult.patch);
+  const cssResult = buildExportCssWithReport(patch, patchResult.overrideCss || "");
+
+  const srcDir = path.join(projectRoot, "src");
+  await fs.mkdir(srcDir, { recursive: true });
+
+  const relCssPath = path.join(srcDir, "REL_overrides.css");
+  await fs.writeFile(relCssPath, cssResult.css, "utf8");
+
+  const originalEntry = await detectViteEntryFile(srcDir);
+  const relEntryPath = await writeViteRelEntry(srcDir, originalEntry);
+  const instructionsPath = path.join(projectRoot, "REL_INSTRUCTIONS.txt");
+  await fs.writeFile(instructionsPath, buildViteInstructionsText(originalEntry, relEntryPath), "utf8");
+
+  return {
+    mode: "safe-vite-react-style",
+    css: relCssPath,
+    entry: relEntryPath,
+    instructions: instructionsPath,
+    export_report: cssResult.report,
   };
 }
 
@@ -48,6 +81,62 @@ async function safeReadPatchForExport(projectRoot) {
     console.warn(`[REL export] Failed to read patch.json (${error.message}). Falling back to override.css only.`);
     return { patch: null, overrideCss };
   }
+}
+
+async function detectViteEntryFile(srcDir) {
+  const candidates = [
+    "main.tsx",
+    "main.jsx",
+    "main.ts",
+    "main.js",
+    "index.tsx",
+    "index.jsx",
+    "index.ts",
+    "index.js",
+  ];
+
+  for (const candidate of candidates) {
+    const fullPath = path.join(srcDir, candidate);
+    if (await fileExists(fullPath)) {
+      return candidate;
+    }
+  }
+  throw new Error(`Could not detect Vite entry file in "${srcDir}". Expected one of: ${candidates.join(", ")}`);
+}
+
+async function writeViteRelEntry(srcDir, originalEntry) {
+  const safeOriginal = String(originalEntry || "").trim();
+  const originalExt = path.extname(safeOriginal).toLowerCase();
+  const relEntryName = [".tsx", ".ts"].includes(originalExt) ? "REL_entry.tsx" : "REL_entry.jsx";
+  const relEntryPath = path.join(srcDir, relEntryName);
+  const importTarget = `./${safeOriginal.replace(/\\/g, "/")}`;
+
+  const lines = [
+    "/* REL_EDITOR generated entry for Style-only export */",
+    "import \"./REL_overrides.css\";",
+    `import \"${importTarget}\";`,
+    "",
+  ];
+  await fs.writeFile(relEntryPath, lines.join("\n"), "utf8");
+  return relEntryPath;
+}
+
+function buildViteInstructionsText(originalEntry, relEntryPath) {
+  const relEntryName = path.basename(relEntryPath || "REL_entry.jsx");
+  return [
+    "REL_EDITOR Vite React (Style only) export",
+    "",
+    `Generated CSS: src/REL_overrides.css`,
+    `Generated entry: src/${relEntryName}`,
+    "",
+    "To run with the REL entry without editing source files permanently:",
+    "1. Temporarily point your Vite entry import to src/REL_entry.* in your local run flow,",
+    "   or create a local script that uses REL_entry as the startup module.",
+    `2. Keep your original entry file unchanged: src/${originalEntry}`,
+    "",
+    "No package.json changes were made automatically.",
+    "",
+  ].join("\n");
 }
 
 function buildExportHtml(htmlRaw, patch, sourceDir, relCssPath) {
@@ -197,9 +286,10 @@ function injectStylesheetLoader(htmlText, loaderTag) {
   return `${exportedHtml}\n${loaderTag}`;
 }
 
-function buildExportCss(patch, overrideCss) {
+function buildExportCssWithReport(patch, overrideCss) {
   const globalCss = normalizeRgbaAlphaInCssValue(stripManagedRelIdRules(overrideCss));
-  const stableCss = buildStableOverrideCss(patch);
+  const stableResult = buildStableOverrideCssWithReport(patch);
+  const stableCss = stableResult.css;
 
   const parts = [];
   if (globalCss.trim()) {
@@ -208,10 +298,15 @@ function buildExportCss(patch, overrideCss) {
   if (stableCss.trim()) {
     parts.push(stableCss.trim());
   }
-  if (parts.length === 0) {
-    return "";
-  }
-  return `${parts.join("\n\n")}\n`;
+  const css = parts.length === 0 ? "" : `${parts.join("\n\n")}\n`;
+  return {
+    css,
+    report: {
+      exported_rules: stableResult.report.exported_rules,
+      skipped_rules_count: stableResult.report.skipped_rules.length,
+      skipped_rules: stableResult.report.skipped_rules,
+    },
+  };
 }
 
 function stripManagedRelIdRules(cssText) {
@@ -220,21 +315,32 @@ function stripManagedRelIdRules(cssText) {
   return withoutRelRules.replace(/\n{3,}/g, "\n\n");
 }
 
-function buildStableOverrideCss(rawPatch) {
+function buildStableOverrideCssWithReport(rawPatch) {
   const patch = ensurePlainObject(rawPatch);
   const overridesMeta = ensurePlainObject(patch.overridesMeta || patch.overrides_meta);
   const relIds = Object.keys(overridesMeta).sort();
   if (relIds.length === 0) {
-    return "";
+    return {
+      css: "",
+      report: {
+        exported_rules: 0,
+        skipped_rules: [],
+      },
+    };
   }
 
   const selectorMap = buildSelectorMapForExport(patch);
   const mergedBySelector = new Map();
+  const skippedRules = [];
 
   for (const relId of relIds) {
     const selector = resolveExportSelector(relId, selectorMap, patch);
     if (!selector) {
       console.warn(`[REL export] Missing selector for relId "${relId}". Skipping overrides.`);
+      skippedRules.push({
+        relId,
+        reason: "missing-stable-selector",
+      });
       continue;
     }
 
@@ -270,7 +376,13 @@ function buildStableOverrideCss(rawPatch) {
     lines.push("");
   }
 
-  return lines.join("\n");
+  return {
+    css: lines.join("\n"),
+    report: {
+      exported_rules: mergedBySelector.size,
+      skipped_rules: skippedRules,
+    },
+  };
 }
 
 function buildSelectorMapForExport(patch) {
@@ -464,14 +576,23 @@ function ensurePlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-async function exportMerge(projectRoot, indexPath) {
-  const safeResult = await exportSafe(projectRoot, indexPath);
+async function exportMerge(projectRoot, indexPath, options) {
+  const safeResult = await exportSafe(projectRoot, indexPath, options);
   return {
     mode: "merge",
     html: safeResult.html,
     css: safeResult.css,
     note: "Merge mode currently exports a merged-ready REL_ HTML + CSS pair.",
   };
+}
+
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 module.exports = {

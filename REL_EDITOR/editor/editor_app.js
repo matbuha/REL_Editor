@@ -170,6 +170,9 @@
   ];
 
   const PATCH_VERSION = 4;
+  const PROJECT_TYPE_STATIC = "static-html";
+  const PROJECT_TYPE_VITE_REACT_STYLE = "vite-react-style";
+  const DEFAULT_VITE_DEV_URL = "http://localhost:5173";
   const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
   const LEFT_MIN_PX = 200;
   const RIGHT_MIN_PX = 260;
@@ -178,7 +181,16 @@
 
   const state = {
     projectRoot: "",
+    projectType: PROJECT_TYPE_STATIC,
     indexPath: "index.html",
+    devUrl: DEFAULT_VITE_DEV_URL,
+    viteStatus: {
+      running: false,
+      port: null,
+      installing: false,
+      projectRoot: "",
+      devUrl: DEFAULT_VITE_DEV_URL,
+    },
     defaultsLibraries: {
       designLibrary: "none",
       iconSet: "none",
@@ -266,7 +278,14 @@
     resizeOverlay: document.getElementById("resizeOverlay"),
     iframe: document.getElementById("liveFrame"),
     projectRootInput: document.getElementById("projectRootInput"),
+    projectTypeSelect: document.getElementById("projectTypeSelect"),
+    indexPathRow: document.getElementById("indexPathRow"),
     indexPathInput: document.getElementById("indexPathInput"),
+    viteControlsRow: document.getElementById("viteControlsRow"),
+    devUrlInput: document.getElementById("devUrlInput"),
+    startDevServerBtn: document.getElementById("startDevServerBtn"),
+    stopDevServerBtn: document.getElementById("stopDevServerBtn"),
+    viteStatusText: document.getElementById("viteStatusText"),
     loadProjectBtn: document.getElementById("loadProjectBtn"),
     savePatchBtn: document.getElementById("savePatchBtn"),
     exportSafeBtn: document.getElementById("exportSafeBtn"),
@@ -305,6 +324,7 @@
     applyFontsGloballyBtn: document.getElementById("applyFontsGloballyBtn"),
     applyThemeToPageBtn: document.getElementById("applyThemeToPageBtn"),
     statusText: document.getElementById("statusText"),
+    exportReport: document.getElementById("exportReport"),
     selectionInfo: document.getElementById("selectionInfo"),
     controlsContainer: document.getElementById("controlsContainer"),
     refreshTreeBtn: document.getElementById("refreshTreeBtn"),
@@ -349,6 +369,7 @@
     bindEvents();
     initResizableLayout();
     await loadProjectInfo();
+    syncProjectTypeUi();
     await loadPatchInfo();
     syncLibraryControlsFromState();
     syncFontControlsFromState();
@@ -360,6 +381,20 @@
   function bindEvents() {
     window.addEventListener("message", onMessageFromOverlay);
     window.addEventListener("keydown", onEditorKeyDown, true);
+
+    dom.projectTypeSelect.addEventListener("change", () => {
+      const nextType = normalizeProjectType(dom.projectTypeSelect.value);
+      state.projectType = nextType;
+      syncProjectTypeUi();
+    });
+
+    dom.startDevServerBtn.addEventListener("click", async () => {
+      await startViteDevServer();
+    });
+
+    dom.stopDevServerBtn.addEventListener("click", async () => {
+      await stopViteDevServer();
+    });
 
     dom.loadProjectBtn.addEventListener("click", async () => {
       await applyProjectSelection();
@@ -2143,7 +2178,10 @@
 
     const data = await response.json();
     state.projectRoot = data.project_root;
+    state.projectType = normalizeProjectType(data.project_type);
     state.indexPath = data.index_path;
+    state.devUrl = normalizeDevUrl(data.dev_url);
+    state.viteStatus = normalizeViteStatus(data.vite_status, state.devUrl);
     state.defaultsLibraries = normalizeRuntimeLibraries(data.defaults_libraries || {});
     state.runtimeLibraries = { ...state.defaultsLibraries };
     state.defaultsFonts = normalizeRuntimeFonts(data.defaults_fonts || {});
@@ -2154,14 +2192,21 @@
     state.attributeOverrides = {};
     state.textOverrides = {};
     dom.projectRootInput.value = data.project_root;
+    dom.projectTypeSelect.value = state.projectType;
     dom.indexPathInput.value = data.index_path;
+    dom.devUrlInput.value = state.devUrl;
+    clearExportReport();
+    renderViteStatus();
     setStatus(`Loaded project: ${data.project_root}`);
   }
 
   async function applyProjectSelection() {
+    const requestedType = normalizeProjectType(dom.projectTypeSelect.value);
     const payload = {
       project_root: dom.projectRootInput.value,
+      project_type: requestedType,
       index_path: dom.indexPathInput.value,
+      dev_url: dom.devUrlInput.value,
     };
 
     const response = await fetch("/api/project", {
@@ -2177,7 +2222,10 @@
     }
 
     state.projectRoot = data.project_root;
+    state.projectType = normalizeProjectType(data.project_type);
     state.indexPath = data.index_path;
+    state.devUrl = normalizeDevUrl(data.dev_url);
+    state.viteStatus = normalizeViteStatus(data.vite_status, state.devUrl);
     state.defaultsLibraries = normalizeRuntimeLibraries(data.defaults_libraries || {});
     state.runtimeLibraries = { ...state.defaultsLibraries };
     state.defaultsFonts = normalizeRuntimeFonts(data.defaults_fonts || {});
@@ -2199,6 +2247,13 @@
     state.overlayReady = false;
     state.controls.backgroundModeByRelId = {};
 
+    dom.projectRootInput.value = state.projectRoot;
+    dom.indexPathInput.value = state.indexPath;
+    dom.projectTypeSelect.value = state.projectType;
+    dom.devUrlInput.value = state.devUrl;
+    syncProjectTypeUi();
+    clearExportReport();
+    renderViteStatus();
     await loadPatchInfo();
     syncLibraryControlsFromState();
     syncFontControlsFromState();
@@ -2211,9 +2266,214 @@
 
   function loadIframe() {
     state.overlayReady = false;
+    if (state.projectType === PROJECT_TYPE_VITE_REACT_STYLE) {
+      setStatus("Loading Vite preview...");
+      dom.iframe.src = "/vite-proxy/";
+      return;
+    }
+
     setStatus("Loading preview...");
     const url = `/project/${encodePath(state.indexPath)}`;
     dom.iframe.src = url;
+  }
+
+  function syncProjectTypeUi() {
+    const isVite = state.projectType === PROJECT_TYPE_VITE_REACT_STYLE;
+    dom.projectTypeSelect.value = state.projectType;
+    dom.indexPathRow.classList.toggle("hidden", isVite);
+    dom.viteControlsRow.classList.toggle("hidden", !isVite);
+    dom.indexPathInput.disabled = isVite;
+    dom.devUrlInput.disabled = !isVite;
+    renderViteStatus();
+    if (!isVite) {
+      clearExportReport();
+    }
+  }
+
+  function normalizeProjectType(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === PROJECT_TYPE_VITE_REACT_STYLE) {
+      return PROJECT_TYPE_VITE_REACT_STYLE;
+    }
+    return PROJECT_TYPE_STATIC;
+  }
+
+  function normalizeDevUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return DEFAULT_VITE_DEV_URL;
+    }
+    try {
+      const parsed = new URL(raw);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        return DEFAULT_VITE_DEV_URL;
+      }
+      return parsed.origin;
+    } catch {
+      return DEFAULT_VITE_DEV_URL;
+    }
+  }
+
+  function normalizeViteStatus(value, fallbackUrl) {
+    const raw = value && typeof value === "object" ? value : {};
+    const devUrl = normalizeDevUrl(raw.dev_url || raw.devUrl || fallbackUrl || DEFAULT_VITE_DEV_URL);
+    const parsedPort = Number(raw.port);
+    return {
+      running: Boolean(raw.running),
+      installing: Boolean(raw.installing),
+      port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : null,
+      projectRoot: String(raw.project_root || raw.projectRoot || state.projectRoot || "").trim(),
+      devUrl,
+    };
+  }
+
+  function renderViteStatus() {
+    if (!dom.viteStatusText) {
+      return;
+    }
+    const isVite = state.projectType === PROJECT_TYPE_VITE_REACT_STYLE;
+    const status = normalizeViteStatus(state.viteStatus, state.devUrl);
+    state.viteStatus = status;
+
+    if (!isVite) {
+      dom.viteStatusText.textContent = "Vite: not active";
+      dom.startDevServerBtn.disabled = true;
+      dom.stopDevServerBtn.disabled = true;
+      return;
+    }
+
+    if (status.installing) {
+      dom.viteStatusText.textContent = "Vite: installing dependencies...";
+    } else if (status.running) {
+      const portText = status.port ? ` on port ${status.port}` : "";
+      dom.viteStatusText.textContent = `Vite: running${portText}`;
+    } else {
+      dom.viteStatusText.textContent = "Vite: stopped";
+    }
+
+    dom.startDevServerBtn.disabled = status.running || status.installing;
+    dom.stopDevServerBtn.disabled = !status.running && !status.installing;
+  }
+
+  async function startViteDevServer() {
+    if (state.projectType !== PROJECT_TYPE_VITE_REACT_STYLE) {
+      state.projectType = PROJECT_TYPE_VITE_REACT_STYLE;
+      syncProjectTypeUi();
+    }
+
+    state.viteStatus = {
+      ...state.viteStatus,
+      installing: true,
+    };
+    renderViteStatus();
+    setStatus("Starting Vite dev server...");
+    try {
+      const response = await fetch("/api/vite/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_root: dom.projectRootInput.value,
+          dev_url: dom.devUrlInput.value,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        state.viteStatus = normalizeViteStatus(data.vite_status || {}, state.devUrl);
+        renderViteStatus();
+        setStatus(data.error || "Failed to start Vite dev server", true);
+        return;
+      }
+
+      state.projectRoot = String(data.project_root || state.projectRoot || "").trim();
+      state.projectType = normalizeProjectType(data.project_type || PROJECT_TYPE_VITE_REACT_STYLE);
+      state.devUrl = normalizeDevUrl(data.dev_url || dom.devUrlInput.value);
+      state.viteStatus = normalizeViteStatus(data.vite_status, state.devUrl);
+      dom.projectRootInput.value = state.projectRoot;
+      dom.projectTypeSelect.value = state.projectType;
+      dom.devUrlInput.value = state.devUrl;
+      syncProjectTypeUi();
+      loadIframe();
+      setStatus(`Vite dev server running: ${state.devUrl}`);
+    } catch (error) {
+      state.viteStatus = {
+        ...state.viteStatus,
+        installing: false,
+      };
+      renderViteStatus();
+      setStatus(`Failed to start Vite dev server: ${error.message}`, true);
+    }
+  }
+
+  async function stopViteDevServer() {
+    setStatus("Stopping Vite dev server...");
+    try {
+      const response = await fetch("/api/vite/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_root: dom.projectRootInput.value,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        state.viteStatus = normalizeViteStatus(data.vite_status || {}, state.devUrl);
+        renderViteStatus();
+        setStatus(data.error || "Failed to stop Vite dev server", true);
+        return;
+      }
+
+      state.projectType = normalizeProjectType(data.project_type || state.projectType);
+      state.devUrl = normalizeDevUrl(data.dev_url || state.devUrl);
+      state.viteStatus = normalizeViteStatus(data.vite_status, state.devUrl);
+      dom.projectTypeSelect.value = state.projectType;
+      dom.devUrlInput.value = state.devUrl;
+      syncProjectTypeUi();
+      if (state.projectType === PROJECT_TYPE_VITE_REACT_STYLE) {
+        loadIframe();
+      }
+      setStatus("Vite dev server stopped");
+    } catch (error) {
+      setStatus(`Failed to stop Vite dev server: ${error.message}`, true);
+    }
+  }
+
+  function clearExportReport() {
+    if (!dom.exportReport) {
+      return;
+    }
+    dom.exportReport.classList.add("hidden");
+    dom.exportReport.textContent = "";
+  }
+
+  function renderExportReport(report) {
+    if (!dom.exportReport) {
+      return;
+    }
+
+    const safeReport = report && typeof report === "object" ? report : null;
+    const skipped = safeReport && Array.isArray(safeReport.skipped_rules) ? safeReport.skipped_rules : [];
+    const exportedRules = Number(safeReport && safeReport.exported_rules) || 0;
+    const skippedCount = Number(safeReport && safeReport.skipped_rules_count) || skipped.length;
+
+    if (!safeReport) {
+      clearExportReport();
+      return;
+    }
+
+    const lines = [`Export report: ${exportedRules} rules exported, ${skippedCount} skipped`];
+    for (const item of skipped.slice(0, 10)) {
+      const relId = String(item && item.relId ? item.relId : "").trim();
+      const reason = String(item && item.reason ? item.reason : "unknown").trim();
+      lines.push(`- ${relId || "(unknown relId)"}: ${reason}`);
+    }
+    if (skipped.length > 10) {
+      lines.push(`- ... ${skipped.length - 10} more skipped rules`);
+    }
+
+    dom.exportReport.textContent = lines.join("\n");
+    dom.exportReport.classList.remove("hidden");
   }
 
   async function loadPatchInfo() {
@@ -2239,6 +2499,9 @@
     state.runtimeFonts = normalizedPatch.runtimeFonts || { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
     state.theme = normalizedPatch.theme || createDefaultThemeState();
     state.controls.backgroundModeByRelId = {};
+    dom.projectTypeSelect.value = state.projectType;
+    dom.devUrlInput.value = state.devUrl;
+    syncProjectTypeUi();
 
     if (hasPatchContent()) {
       setStatus("Patch loaded");
@@ -2250,7 +2513,9 @@
     const patch = {
       version: PATCH_VERSION,
       project_root: state.projectRoot,
+      project_type: state.projectType,
       index_path: state.indexPath,
+      dev_url: state.devUrl,
       elementsMap: state.elementsMap,
       selectorMap: normalizeSelectorMap(state.selectorMap),
       attributeOverrides: normalizeAttributeOverrides(state.attributeOverrides),
@@ -2380,10 +2645,14 @@
   }
 
   async function exportSafe() {
+    clearExportReport();
     const response = await fetch("/api/export-safe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ index_path: state.indexPath }),
+      body: JSON.stringify({
+        index_path: state.indexPath,
+        project_type: state.projectType,
+      }),
     });
 
     const data = await response.json();
@@ -2392,7 +2661,18 @@
       return;
     }
 
-    setStatus(`Exported: ${data.result.html}`);
+    const result = data.result || {};
+    renderExportReport(result.export_report || null);
+
+    if (state.projectType === PROJECT_TYPE_VITE_REACT_STYLE) {
+      const cssPath = String(result.css || "").trim();
+      const exported = Number(result.export_report && result.export_report.exported_rules) || 0;
+      const skipped = Number(result.export_report && result.export_report.skipped_rules_count) || 0;
+      setStatus(`Exported Vite CSS: ${cssPath} (rules: ${exported}, skipped: ${skipped})`);
+      return;
+    }
+
+    setStatus(`Exported: ${result.html}`);
   }
 
   async function uploadImageFromInput() {

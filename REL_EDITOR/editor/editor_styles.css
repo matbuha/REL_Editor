@@ -67,6 +67,47 @@ body {
   color: var(--ink);
 }
 
+.project-picker select {
+  min-width: 170px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: #fff;
+  color: var(--ink);
+}
+
+#indexPathRow input {
+  width: 180px;
+}
+
+.vite-controls {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px dashed #d6c7b6;
+  border-radius: 8px;
+  background: #fffaf4;
+}
+
+.vite-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.vite-controls input {
+  width: 190px;
+}
+
+.vite-status {
+  font-size: 11px;
+  color: #6e5c4a;
+  padding-bottom: 8px;
+}
+
 button {
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -84,6 +125,21 @@ button:hover {
   font-size: 12px;
   color: var(--muted);
   pointer-events: none;
+}
+
+.export-report {
+  margin: 0;
+  padding: 6px 8px;
+  max-width: 360px;
+  max-height: 86px;
+  overflow: auto;
+  border: 1px solid #d9ccb8;
+  border-radius: 6px;
+  background: #fffdf8;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #6a5846;
+  white-space: pre-wrap;
 }
 
 .layout {
@@ -675,6 +731,11 @@ button:hover {
   }
 
   .project-picker {
+    flex-wrap: wrap;
+  }
+
+  .vite-controls {
+    width: 100%;
     flex-wrap: wrap;
   }
 

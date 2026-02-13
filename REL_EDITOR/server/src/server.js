@@ -1,6 +1,7 @@
 const path = require("path");
 const fs = require("fs/promises");
 const crypto = require("crypto");
+const { URL } = require("url");
 const express = require("express");
 const multer = require("multer");
 const mime = require("mime-types");
@@ -14,18 +15,29 @@ const {
   writePatch,
 } = require("./file_io");
 const { exportSafe, exportMerge } = require("./export");
+const {
+  ViteRunner,
+  PROJECT_TYPE_STATIC,
+  PROJECT_TYPE_VITE_REACT_STYLE,
+  DEFAULT_VITE_DEV_URL,
+  normalizeProjectType,
+  normalizeDevUrl,
+} = require("./vite_runner");
 
 const ROOT_DIR = path.resolve(__dirname, "..", "..", "..");
 
 async function main() {
   const config = await loadRelConfig(ROOT_DIR);
   let currentProjectRoot = normalizeProjectRoot(ROOT_DIR, config.default_project_root);
+  let currentProjectType = normalizeProjectType(config.default_project_type || PROJECT_TYPE_STATIC);
   let currentIndexPath = (config.default_index_path || "index.html").replace(/\\/g, "/");
+  let currentDevUrl = normalizeDevUrl(config.default_dev_url || DEFAULT_VITE_DEV_URL);
   const externalStyles = sanitizeExternalList(config.externalStyles);
   const externalScripts = sanitizeExternalList(config.externalScripts);
   const defaultsLibraries = normalizeDefaultsLibraries(config.defaultsLibraries);
   const defaultsFonts = normalizeDefaultsFonts(config.defaultsFonts);
   const defaultTheme = createDefaultTheme();
+  const viteRunner = new ViteRunner();
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -44,16 +56,29 @@ async function main() {
     res.redirect("/editor/index.html");
   });
 
-  app.get("/api/project", async (req, res) => {
-    res.json({
+  function buildProjectPayload() {
+    const viteStatus = viteRunner.getStatus();
+    const safeDevUrl = normalizeDevUrl(viteStatus.dev_url || currentDevUrl || DEFAULT_VITE_DEV_URL);
+    const iframeSrc = currentProjectType === PROJECT_TYPE_VITE_REACT_STYLE
+      ? "/vite-proxy/"
+      : `/project/${encodePathForUrl(currentIndexPath)}`;
+
+    return {
       project_root: currentProjectRoot,
+      project_type: currentProjectType,
       index_path: currentIndexPath,
-      iframe_src: `/project/${encodePathForUrl(currentIndexPath)}`,
+      dev_url: safeDevUrl,
+      iframe_src: iframeSrc,
+      vite_status: viteStatus,
       external_styles: externalStyles,
       external_scripts: externalScripts,
       defaults_libraries: defaultsLibraries,
       defaults_fonts: defaultsFonts,
-    });
+    };
+  }
+
+  app.get("/api/project", async (req, res) => {
+    res.json(buildProjectPayload());
   });
 
   app.post("/api/project", async (req, res) => {
@@ -64,28 +89,100 @@ async function main() {
       if (!stats.isDirectory()) {
         throw new Error("project_root must point to a directory");
       }
+      const requestedType = normalizeProjectType(body.project_type || currentProjectType);
+      const requestedDevUrl = normalizeDevUrl(body.dev_url || currentDevUrl);
 
-      const requestedIndex = (body.index_path || "index.html").replace(/\\/g, "/");
-      const indexAbsolute = resolveInside(requestedRoot, requestedIndex);
-      if (!(await fileExists(indexAbsolute))) {
-        throw new Error(`index_path not found: ${requestedIndex}`);
+      let requestedIndex = currentIndexPath;
+      if (requestedType === PROJECT_TYPE_STATIC) {
+        requestedIndex = (body.index_path || "index.html").replace(/\\/g, "/");
+        const indexAbsolute = resolveInside(requestedRoot, requestedIndex);
+        if (!(await fileExists(indexAbsolute))) {
+          throw new Error(`index_path not found: ${requestedIndex}`);
+        }
+      } else if (!(await fileExists(path.join(requestedRoot, "package.json")))) {
+        throw new Error("Vite React mode requires package.json in project root");
+      }
+
+      const rootChanged = currentProjectRoot !== requestedRoot;
+      const switchedToStatic = requestedType === PROJECT_TYPE_STATIC && currentProjectType !== PROJECT_TYPE_STATIC;
+      if (rootChanged || switchedToStatic) {
+        await viteRunner.stop();
       }
 
       currentProjectRoot = requestedRoot;
       currentIndexPath = requestedIndex;
+      currentProjectType = requestedType;
+      currentDevUrl = requestedDevUrl;
+
+      res.json({
+        ok: true,
+        ...buildProjectPayload(),
+      });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get("/api/vite/status", (req, res) => {
+    res.json({
+      ok: true,
+      project_type: currentProjectType,
+      dev_url: currentDevUrl,
+      vite_status: viteRunner.getStatus(),
+    });
+  });
+
+  app.post("/api/vite/start", async (req, res) => {
+    try {
+      const body = req.body || {};
+      const requestedRoot = normalizeProjectRoot(ROOT_DIR, body.project_root || currentProjectRoot);
+      const stats = await fs.stat(requestedRoot);
+      if (!stats.isDirectory()) {
+        throw new Error("project_root must point to a directory");
+      }
+
+      currentProjectRoot = requestedRoot;
+      currentProjectType = PROJECT_TYPE_VITE_REACT_STYLE;
+      currentDevUrl = normalizeDevUrl(body.dev_url || currentDevUrl || DEFAULT_VITE_DEV_URL);
+
+      const viteStatus = await viteRunner.start({
+        projectRoot: currentProjectRoot,
+        devUrl: currentDevUrl,
+      });
+      currentDevUrl = normalizeDevUrl(viteStatus.dev_url || currentDevUrl);
 
       res.json({
         ok: true,
         project_root: currentProjectRoot,
-        index_path: currentIndexPath,
-        iframe_src: `/project/${encodePathForUrl(currentIndexPath)}`,
-        external_styles: externalStyles,
-        external_scripts: externalScripts,
-        defaults_libraries: defaultsLibraries,
-        defaults_fonts: defaultsFonts,
+        project_type: currentProjectType,
+        dev_url: currentDevUrl,
+        vite_status: viteStatus,
       });
     } catch (error) {
-      res.status(400).json({ ok: false, error: error.message });
+      res.status(400).json({
+        ok: false,
+        error: error.message,
+        vite_status: viteRunner.getStatus(),
+      });
+    }
+  });
+
+  app.post("/api/vite/stop", async (req, res) => {
+    try {
+      await viteRunner.stop();
+      res.json({
+        ok: true,
+        project_root: currentProjectRoot,
+        project_type: currentProjectType,
+        dev_url: currentDevUrl,
+        vite_status: viteRunner.getStatus(),
+      });
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        error: error.message,
+        vite_status: viteRunner.getStatus(),
+      });
     }
   });
 
@@ -107,7 +204,9 @@ async function main() {
       const patch = body.patch || {
         version: 4,
         project_root: currentProjectRoot,
+        project_type: currentProjectType,
         index_path: currentIndexPath,
+        dev_url: currentDevUrl,
         elementsMap: {},
         selectorMap: {},
         attributeOverrides: {},
@@ -133,9 +232,15 @@ async function main() {
   app.post("/api/export-safe", async (req, res) => {
     try {
       const body = req.body || {};
-      const indexPath = (body.index_path || currentIndexPath).replace(/\\/g, "/");
-      const safeIndexPath = await validateIndexPath(currentProjectRoot, indexPath);
-      const result = await exportSafe(currentProjectRoot, safeIndexPath);
+      const requestedType = normalizeProjectType(body.project_type || currentProjectType);
+      let safeIndexPath = currentIndexPath;
+      if (requestedType === PROJECT_TYPE_STATIC) {
+        const indexPath = (body.index_path || currentIndexPath).replace(/\\/g, "/");
+        safeIndexPath = await validateIndexPath(currentProjectRoot, indexPath);
+      }
+      const result = await exportSafe(currentProjectRoot, safeIndexPath, {
+        projectType: requestedType,
+      });
       res.json({ ok: true, result });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -147,7 +252,9 @@ async function main() {
       const body = req.body || {};
       const indexPath = (body.index_path || currentIndexPath).replace(/\\/g, "/");
       const safeIndexPath = await validateIndexPath(currentProjectRoot, indexPath);
-      const result = await exportMerge(currentProjectRoot, safeIndexPath);
+      const result = await exportMerge(currentProjectRoot, safeIndexPath, {
+        projectType: PROJECT_TYPE_STATIC,
+      });
       res.json({ ok: true, result });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -193,6 +300,173 @@ async function main() {
       }
     });
   });
+
+  app.use(async (req, res, next) => {
+    try {
+      if (!shouldProxyViteRequest(req)) {
+        next();
+        return;
+      }
+      await proxyViteRequest(req, res);
+    } catch (error) {
+      res.status(502).send(`Vite proxy failed: ${error.message}`);
+    }
+  });
+
+  function shouldProxyViteRequest(req) {
+    if (currentProjectType !== PROJECT_TYPE_VITE_REACT_STYLE) {
+      return false;
+    }
+
+    const viteStatus = viteRunner.getStatus();
+    if (!viteStatus.running || !viteStatus.dev_url) {
+      return String(req.path || "").startsWith("/vite-proxy");
+    }
+
+    const safePath = String(req.path || "");
+    if (safePath === "/vite-proxy" || safePath.startsWith("/vite-proxy/")) {
+      return true;
+    }
+
+    if (
+      safePath.startsWith("/@vite") ||
+      safePath.startsWith("/@react-refresh") ||
+      safePath.startsWith("/@id/") ||
+      safePath.startsWith("/@fs/") ||
+      safePath.startsWith("/src/") ||
+      safePath.startsWith("/node_modules/") ||
+      safePath.startsWith("/assets/") ||
+      safePath === "/vite.svg" ||
+      safePath === "/favicon.ico"
+    ) {
+      return true;
+    }
+
+    const referer = String(req.get("referer") || "");
+    let refererPath = "";
+    if (referer) {
+      try {
+        refererPath = new URL(referer).pathname || "";
+      } catch {
+        refererPath = "";
+      }
+    }
+
+    const refererLooksVite = [
+      "/vite-proxy",
+      "/src/",
+      "/node_modules/",
+      "/@vite",
+      "/@id/",
+      "/@fs/",
+      "/@react-refresh",
+    ].some((prefix) => refererPath.startsWith(prefix));
+
+    if (!refererLooksVite) {
+      return false;
+    }
+
+    if (
+      safePath.startsWith("/api/") ||
+      safePath.startsWith("/editor/") ||
+      safePath.startsWith("/runtime/") ||
+      safePath.startsWith("/project/")
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  async function proxyViteRequest(req, res) {
+    const status = viteRunner.getStatus();
+    if (!status.running || !status.dev_url) {
+      res.status(503).type("html").send(buildViteStoppedHtml(currentDevUrl));
+      return;
+    }
+
+    const targetUrl = buildViteProxyTargetUrl(req, status.dev_url);
+    const headers = { ...req.headers };
+    delete headers.host;
+    delete headers.connection;
+    delete headers["content-length"];
+
+    const response = await fetch(targetUrl, {
+      method: req.method,
+      headers,
+      redirect: "manual",
+    });
+
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    const shouldInjectHtml = contentType.includes("text/html") && String(req.path || "").startsWith("/vite-proxy");
+    const overrideAbsolute = path.join(currentProjectRoot, "rel_editor", "override.css");
+    const hasOverride = await fileExists(overrideAbsolute);
+
+    res.status(response.status);
+    for (const [headerName, headerValue] of response.headers.entries()) {
+      const key = headerName.toLowerCase();
+      if (["content-length", "transfer-encoding", "content-encoding", "connection"].includes(key)) {
+        continue;
+      }
+      if (key === "location") {
+        res.setHeader(headerName, rewriteViteLocationHeader(headerValue));
+        continue;
+      }
+      res.setHeader(headerName, headerValue);
+    }
+
+    if (response.status === 304 || req.method === "HEAD") {
+      res.end();
+      return;
+    }
+
+    if (shouldInjectHtml) {
+      const html = await response.text();
+      const injected = injectRuntimeAssets(html, {
+        runtimeCssHref: "/runtime/overlay.css",
+        runtimeJsHref: "/runtime/overlay.js",
+        overrideCssHref: hasOverride ? "/project/rel_editor/override.css" : null,
+        externalStyleHrefs: externalStyles,
+        externalScriptSrcs: externalScripts,
+      });
+      res.type("html").send(injected);
+      return;
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  }
+
+  function buildViteProxyTargetUrl(req, baseDevUrl) {
+    const safeBase = normalizeDevUrl(baseDevUrl || currentDevUrl || DEFAULT_VITE_DEV_URL);
+    const sourcePath = String(req.originalUrl || req.url || "");
+    let targetPath = sourcePath;
+    if (sourcePath === "/vite-proxy") {
+      targetPath = "/";
+    } else if (sourcePath.startsWith("/vite-proxy/")) {
+      targetPath = sourcePath.slice("/vite-proxy".length);
+    }
+    return new URL(targetPath || "/", safeBase).toString();
+  }
+
+  function rewriteViteLocationHeader(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return raw;
+    }
+    if (raw.startsWith("/")) {
+      return `/vite-proxy${raw}`;
+    }
+    try {
+      const parsed = new URL(raw);
+      const status = viteRunner.getStatus();
+      if (status.dev_url && normalizeDevUrl(parsed.origin) === normalizeDevUrl(status.dev_url)) {
+        return `/vite-proxy${parsed.pathname}${parsed.search}${parsed.hash}`;
+      }
+      return raw;
+    } catch {
+      return raw;
+    }
+  }
 
   app.get("/project", async (req, res) => {
     res.redirect(`/project/${encodePathForUrl(currentIndexPath)}`);
@@ -243,11 +517,26 @@ async function main() {
   });
 
   const port = Number(process.env.REL_EDITOR_PORT || config.port || 4311);
-  app.listen(port, () => {
+  const httpServer = app.listen(port, () => {
     console.log(`REL_EDITOR running on http://localhost:${port}`);
     console.log(`Project root: ${currentProjectRoot}`);
     console.log(`Index path: ${currentIndexPath}`);
   });
+
+  let shuttingDown = false;
+  async function shutdown() {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    await viteRunner.dispose();
+    httpServer.close(() => {
+      process.exit(0);
+    });
+  }
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 function encodePathForUrl(inputPath) {
@@ -265,6 +554,38 @@ async function validateIndexPath(projectRoot, indexPath) {
     throw new Error("index_path must point to an HTML file");
   }
   return path.relative(projectRoot, absolute).replace(/\\/g, "/");
+}
+
+function buildViteStoppedHtml(devUrl) {
+  const safeUrl = normalizeDevUrl(devUrl || DEFAULT_VITE_DEV_URL);
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>REL_EDITOR Vite Preview</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #f6f4ef; color: #3f3328; }
+    .box { max-width: 680px; margin: 48px auto; background: #fff; border: 1px solid #dacbb7; border-radius: 10px; padding: 18px; }
+    h1 { margin: 0 0 10px; font-size: 20px; }
+    p { margin: 0 0 8px; line-height: 1.45; }
+    code { background: #f4efe7; border-radius: 4px; padding: 2px 6px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Vite Dev Server Is Not Running</h1>
+    <p>Start the server from REL_EDITOR using <strong>Start Dev Server</strong>.</p>
+    <p>Configured Dev URL: <code>${escapeHtmlText(safeUrl)}</code></p>
+  </div>
+</body>
+</html>`;
+}
+
+function escapeHtmlText(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function sanitizeExternalList(value) {

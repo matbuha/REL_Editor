@@ -15,9 +15,25 @@
         <input id="projectRootInput" type="text" placeholder="C:/path/to/project">
       </label>
       <label>
+        Project Type
+        <select id="projectTypeSelect">
+          <option value="static-html">Static HTML</option>
+          <option value="vite-react-style">Vite React (Style only)</option>
+        </select>
+      </label>
+      <label id="indexPathRow">
         Index Path
         <input id="indexPathInput" type="text" placeholder="index.html">
       </label>
+      <div id="viteControlsRow" class="vite-controls hidden">
+        <label>
+          Dev URL
+          <input id="devUrlInput" type="text" placeholder="http://localhost:5173">
+        </label>
+        <button id="startDevServerBtn" type="button">Start Dev Server</button>
+        <button id="stopDevServerBtn" type="button">Stop Dev Server</button>
+        <span id="viteStatusText" class="vite-status">Vite: stopped</span>
+      </div>
       <button id="loadProjectBtn" type="button">Load Project</button>
       <button id="savePatchBtn" type="button">Save Patch</button>
       <button id="exportSafeBtn" type="button">Export Safe</button>
@@ -68,6 +84,7 @@
       <div id="fontFamiliesList" class="font-families-list"></div>
     </div>
     <div id="statusText" class="status">Ready</div>
+    <pre id="exportReport" class="export-report hidden"></pre>
   </header>
 
   <main id="layoutRoot" class="layout">
