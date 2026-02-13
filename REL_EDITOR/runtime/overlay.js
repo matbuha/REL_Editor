@@ -154,7 +154,7 @@
 
       deleteNodeByReference({
         relId: ensureRelId(state.selectedElement),
-        fallbackSelector: buildFallbackSelector(state.selectedElement),
+        fallbackSelector: buildStableSelector(state.selectedElement),
         silent: false,
       });
     }
@@ -399,7 +399,7 @@
     }
 
     const finalRelId = ensureRelId(element, relId);
-    const finalFallback = buildFallbackSelector(element);
+    const finalStableSelector = buildStableSelector(element);
     const deletedNodeId = element.dataset.relAddedNodeId || "";
 
     if (state.selectedElement === element) {
@@ -418,7 +418,8 @@
         type: "REL_NODE_DELETED",
         payload: {
           relId: finalRelId,
-          fallbackSelector: finalFallback,
+          fallbackSelector: finalStableSelector,
+          stableSelector: finalStableSelector,
           timestamp: Date.now(),
         },
       });
@@ -663,7 +664,8 @@
           type: node.type,
           position: "append",
           props: node.props,
-          fallbackSelector: buildFallbackSelector(existingByNodeId),
+          fallbackSelector: buildStableSelector(existingByNodeId),
+          stableSelector: buildStableSelector(existingByNodeId),
         };
       }
     }
@@ -682,7 +684,8 @@
           type: node.type,
           position: "append",
           props: node.props,
-          fallbackSelector: buildFallbackSelector(existingByRelId),
+          fallbackSelector: buildStableSelector(existingByRelId),
+          stableSelector: buildStableSelector(existingByRelId),
         };
       }
     }
@@ -714,7 +717,8 @@
       type: node.type,
       position: "append",
       props: node.props,
-      fallbackSelector: buildFallbackSelector(element),
+      fallbackSelector: buildStableSelector(element),
+      stableSelector: buildStableSelector(element),
     };
   }
 
@@ -962,6 +966,7 @@
     const computed = window.getComputedStyle(element);
     const rect = element.getBoundingClientRect();
     const linkContext = getLinkContext(element, relId);
+    const stableSelector = buildStableSelector(element);
 
     const computedSubset = {};
     for (const key of TRACKED_STYLES) {
@@ -974,7 +979,8 @@
 
     return {
       relId,
-      fallbackSelector: buildFallbackSelector(element),
+      fallbackSelector: stableSelector,
+      stableSelector,
       tagName: element.tagName.toLowerCase(),
       id: element.id || "",
       className,
@@ -1047,27 +1053,200 @@
     };
   }
 
-  function buildFallbackSelector(element) {
-    if (element.id) {
-      return `#${cssEscape(element.id)}`;
+  function buildStableSelector(element) {
+    if (!(element instanceof Element)) {
+      return "";
     }
 
+    if (element.id) {
+      const idSelector = `#${cssEscape(element.id)}`;
+      if (matchesSingleElement(idSelector, element)) {
+        return idSelector;
+      }
+    }
+
+    const uniqueClassSelector = findUniqueClassSelector(element);
+    if (uniqueClassSelector) {
+      return uniqueClassSelector;
+    }
+
+    const anchoredWithoutNth = buildAnchoredSelector(element, false);
+    if (anchoredWithoutNth) {
+      return anchoredWithoutNth;
+    }
+
+    const anchoredWithNth = buildAnchoredSelector(element, true);
+    if (anchoredWithNth) {
+      return anchoredWithNth;
+    }
+
+    return buildMinimalNthPath(element);
+  }
+
+  function findUniqueClassSelector(element) {
+    const classes = getUserClassString(element).split(/\s+/).filter(Boolean);
+    for (const cls of classes) {
+      const classSelector = `.${cssEscape(cls)}`;
+      if (matchesSingleElement(classSelector, element)) {
+        return classSelector;
+      }
+    }
+    return "";
+  }
+
+  function buildAnchoredSelector(element, allowNth) {
+    const chain = [];
+    let current = element;
+    while (current && current !== document.body && chain.length < 6) {
+      chain.unshift(current);
+      current = current.parentElement;
+    }
+    if (chain.length === 0) {
+      return "";
+    }
+
+    for (let anchorIndex = 0; anchorIndex < chain.length; anchorIndex += 1) {
+      const anchorElement = chain[anchorIndex];
+      const anchorSelector = buildAnchorSelector(anchorElement);
+      if (!anchorSelector) {
+        continue;
+      }
+
+      const baseSegments = [];
+      for (let index = anchorIndex + 1; index < chain.length; index += 1) {
+        baseSegments.push(buildPathSegment(chain[index], false));
+      }
+      const candidate = [anchorSelector, ...baseSegments].join(" ");
+      if (matchesSingleElement(candidate, element)) {
+        return candidate;
+      }
+
+      if (!allowNth || baseSegments.length === 0) {
+        continue;
+      }
+
+      for (let segmentIndex = baseSegments.length - 1; segmentIndex >= 0; segmentIndex -= 1) {
+        const withSingleNth = [...baseSegments];
+        const sourceElement = chain[anchorIndex + 1 + segmentIndex];
+        withSingleNth[segmentIndex] = buildPathSegment(sourceElement, true);
+        const nthCandidate = [anchorSelector, ...withSingleNth].join(" ");
+        if (matchesSingleElement(nthCandidate, element)) {
+          return nthCandidate;
+        }
+      }
+
+      const cumulativeNth = [...baseSegments];
+      for (let segmentIndex = cumulativeNth.length - 1; segmentIndex >= 0; segmentIndex -= 1) {
+        const sourceElement = chain[anchorIndex + 1 + segmentIndex];
+        cumulativeNth[segmentIndex] = buildPathSegment(sourceElement, true);
+        const nthCandidate = [anchorSelector, ...cumulativeNth].join(" ");
+        if (matchesSingleElement(nthCandidate, element)) {
+          return nthCandidate;
+        }
+      }
+    }
+
+    return "";
+  }
+
+  function buildAnchorSelector(element) {
+    if (!(element instanceof Element)) {
+      return "";
+    }
+    if (element.id) {
+      const byId = `#${cssEscape(element.id)}`;
+      if (matchesSingleElement(byId, element)) {
+        return byId;
+      }
+    }
+
+    const classes = getUserClassString(element).split(/\s+/).filter(Boolean);
+    for (const cls of classes) {
+      const byClass = `.${cssEscape(cls)}`;
+      if (matchesSingleElement(byClass, element)) {
+        return byClass;
+      }
+      const byTagClass = `${element.tagName.toLowerCase()}.${cssEscape(cls)}`;
+      if (matchesSingleElement(byTagClass, element)) {
+        return byTagClass;
+      }
+    }
+
+    return "";
+  }
+
+  function buildPathSegment(element, allowNth) {
+    let segment = element.tagName.toLowerCase();
+    const classes = getUserClassString(element).split(/\s+/).filter(Boolean);
+    if (classes.length > 0) {
+      segment += `.${cssEscape(classes[0])}`;
+    }
+
+    if (!allowNth) {
+      return segment;
+    }
+
+    const parent = element.parentElement;
+    if (!parent) {
+      return segment;
+    }
+
+    const tagName = element.tagName.toLowerCase();
+    const siblings = Array.from(parent.children).filter((child) => {
+      return child instanceof Element && child.tagName.toLowerCase() === tagName;
+    });
+
+    if (siblings.length <= 1) {
+      return segment;
+    }
+
+    const index = siblings.indexOf(element) + 1;
+    if (index <= 0) {
+      return segment;
+    }
+    return `${segment}:nth-of-type(${index})`;
+  }
+
+  function buildMinimalNthPath(element) {
     const parts = [];
     let current = element;
-    let depth = 0;
-
-    while (current && current.nodeType === 1 && depth < 5) {
-      let part = current.tagName.toLowerCase();
-      const className = getUserClassString(current).split(/\s+/)[0];
-      if (className) {
-        part += `.${cssEscape(className)}`;
+    while (current && current !== document.body && parts.length < 6) {
+      const tagName = current.tagName.toLowerCase();
+      const parent = current.parentElement;
+      if (!parent) {
+        parts.unshift(tagName);
+        break;
       }
-      parts.unshift(part);
-      current = current.parentElement;
-      depth += 1;
+
+      const siblings = Array.from(parent.children).filter((child) => {
+        return child instanceof Element && child.tagName.toLowerCase() === tagName;
+      });
+      const index = siblings.indexOf(current) + 1;
+      const needsNth = siblings.length > 1 && index > 0;
+      parts.unshift(needsNth ? `${tagName}:nth-of-type(${index})` : tagName);
+      current = parent;
     }
 
-    return parts.join(" > ");
+    if (parts.length === 0) {
+      return element.tagName.toLowerCase();
+    }
+    return parts.join(" ");
+  }
+
+  function matchesSingleElement(selector, element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+    const normalized = String(selector || "").trim();
+    if (!normalized) {
+      return false;
+    }
+    try {
+      const matches = document.querySelectorAll(normalized);
+      return matches.length === 1 && matches[0] === element;
+    } catch {
+      return false;
+    }
   }
 
   function getTreeSnapshot() {

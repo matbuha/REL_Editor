@@ -105,10 +105,11 @@ async function main() {
     try {
       const body = req.body || {};
       const patch = body.patch || {
-        version: 3,
+        version: 4,
         project_root: currentProjectRoot,
         index_path: currentIndexPath,
         elementsMap: {},
+        selectorMap: {},
         overridesMeta: {},
         attributesMeta: {},
         linksMeta: {},

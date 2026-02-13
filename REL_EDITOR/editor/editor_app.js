@@ -159,7 +159,7 @@
     { type: "pico-link", name: "Pico Link", description: "Pico link style", props: { text: "Pico Link", href: "#" } },
   ];
 
-  const PATCH_VERSION = 3;
+  const PATCH_VERSION = 4;
   const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
   const LEFT_MIN_PX = 200;
   const RIGHT_MIN_PX = 260;
@@ -193,6 +193,7 @@
     theme: createDefaultThemeState(),
     selectedRelId: null,
     elementsMap: {},
+    selectorMap: {},
     overridesMeta: {},
     attributesMeta: {},
     linksMeta: {},
@@ -547,7 +548,10 @@
       type: "REL_DELETE_NODE",
       payload: {
         relId: state.selectedRelId,
-        fallbackSelector: state.elementsMap[state.selectedRelId] || "",
+        fallbackSelector:
+          state.selectorMap[state.selectedRelId] ||
+          state.elementsMap[state.selectedRelId] ||
+          "",
         source,
       },
     });
@@ -1604,7 +1608,9 @@
     const y = String(state.controls.shadowOffsetYInput?.value || "0px").trim() || "0px";
     const blur = String(state.controls.shadowBlurInput?.value || "0px").trim() || "0px";
     const spread = String(state.controls.shadowSpreadInput?.value || "0px").trim() || "0px";
-    const color = String(state.controls.shadowColorInput?.value || "rgba(0, 0, 0, 0.2)").trim() || "rgba(0, 0, 0, 0.2)";
+    const color = normalizeRgbaAlphaInCssValue(
+      String(state.controls.shadowColorInput?.value || "rgba(0, 0, 0, 0.2)").trim() || "rgba(0, 0, 0, 0.2)"
+    );
     const inset = Boolean(state.controls.shadowInsetInput?.checked);
     if (target === "text") {
       return `${x} ${y} ${blur} ${color}`;
@@ -1766,7 +1772,7 @@
     }
 
     const colorMatch = text.match(/(rgba?\([^)]+\)|hsla?\([^)]+\)|#[0-9a-fA-F]{3,8})$/);
-    const color = colorMatch ? colorMatch[1] : fallback.color;
+    const color = normalizeRgbaAlphaInCssValue(colorMatch ? colorMatch[1] : fallback.color);
     const geometry = colorMatch ? text.slice(0, colorMatch.index).trim() : text;
     const tokens = geometry.split(/\s+/).filter(Boolean);
 
@@ -1984,6 +1990,7 @@
     state.runtimeFonts = { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
     state.defaultsTheme = createDefaultThemeState();
     state.theme = createDefaultThemeState();
+    state.selectorMap = {};
     dom.projectRootInput.value = data.project_root;
     dom.indexPathInput.value = data.index_path;
     setStatus(`Loaded project: ${data.project_root}`);
@@ -2017,6 +2024,7 @@
     state.theme = createDefaultThemeState();
     state.selectedRelId = null;
     state.elementsMap = {};
+    state.selectorMap = {};
     state.overridesMeta = {};
     state.attributesMeta = {};
     state.linksMeta = {};
@@ -2055,6 +2063,7 @@
     const normalizedPatch = normalizeLoadedPatch(data.patch);
 
     state.elementsMap = normalizedPatch.elementsMap;
+    state.selectorMap = normalizedPatch.selectorMap || {};
     state.overridesMeta = normalizedPatch.overridesMeta;
     state.attributesMeta = normalizedPatch.attributesMeta;
     state.linksMeta = normalizedPatch.linksMeta;
@@ -2076,6 +2085,7 @@
       project_root: state.projectRoot,
       index_path: state.indexPath,
       elementsMap: state.elementsMap,
+      selectorMap: normalizeSelectorMap(state.selectorMap),
       overridesMeta: state.overridesMeta,
       attributesMeta: state.attributesMeta,
       linksMeta: state.linksMeta,
@@ -2236,7 +2246,18 @@
 
     state.selectedRelId = payload.relId;
     state.lastSelection = payload;
-    state.elementsMap[payload.relId] = payload.fallbackSelector || state.elementsMap[payload.relId] || "";
+    const fallbackSelector = String(payload.fallbackSelector || "").trim();
+    const stableSelector = String(payload.stableSelector || "").trim();
+    if (fallbackSelector) {
+      state.elementsMap[payload.relId] = fallbackSelector;
+    } else if (!state.elementsMap[payload.relId]) {
+      state.elementsMap[payload.relId] = "";
+    }
+    if (stableSelector) {
+      state.selectorMap[payload.relId] = stableSelector;
+    } else if (fallbackSelector && !state.selectorMap[payload.relId]) {
+      state.selectorMap[payload.relId] = fallbackSelector;
+    }
 
     const overrides = state.overridesMeta[payload.relId] || {};
     const attrs = state.attributesMeta[payload.relId] || {};
@@ -2439,14 +2460,16 @@
     }
 
     const relId = state.selectedRelId;
+    const normalizedValue = normalizeRgbaAlphaInCssValue(String(value ?? ""));
+    const trimmedValue = normalizedValue.trim();
     if (!state.overridesMeta[relId]) {
       state.overridesMeta[relId] = {};
     }
 
-    if (String(value).trim() === "") {
+    if (trimmedValue === "") {
       delete state.overridesMeta[relId][property];
     } else {
-      state.overridesMeta[relId][property] = value;
+      state.overridesMeta[relId][property] = normalizedValue;
     }
 
     if (Object.keys(state.overridesMeta[relId]).length === 0) {
@@ -2455,7 +2478,7 @@
 
     sendToOverlay({
       type: "REL_APPLY_STYLE",
-      payload: { relId, property, value },
+      payload: { relId, property, value: trimmedValue ? normalizedValue : "" },
     });
 
     if (state.lastSelection) {
@@ -2557,8 +2580,17 @@
       state.addedNodes.push(node);
     }
 
-    if (node.relId && node.fallbackSelector) {
-      state.elementsMap[node.relId] = node.fallbackSelector;
+    if (node.relId) {
+      const fallbackSelector = String(node.fallbackSelector || "").trim();
+      const stableSelector = String(node.stableSelector || "").trim();
+      if (fallbackSelector) {
+        state.elementsMap[node.relId] = fallbackSelector;
+      }
+      if (stableSelector) {
+        state.selectorMap[node.relId] = stableSelector;
+      } else if (fallbackSelector && !state.selectorMap[node.relId]) {
+        state.selectorMap[node.relId] = fallbackSelector;
+      }
       state.deletedNodes = state.deletedNodes.filter((item) => item.relId !== node.relId);
     }
 
@@ -2579,6 +2611,7 @@
       delete state.overridesMeta[relId];
       delete state.attributesMeta[relId];
       delete state.linksMeta[relId];
+      delete state.selectorMap[relId];
       state.addedNodes = state.addedNodes.filter((node) => node.relId !== relId);
       state.elementsMap[relId] = fallbackSelector || state.elementsMap[relId] || "";
     }
@@ -2879,7 +2912,9 @@
 
     for (const relId of relIds) {
       const props = overridesMeta[relId] || {};
-      const entries = Object.entries(props).filter(([, value]) => String(value).trim() !== "");
+      const entries = Object.entries(props)
+        .map(([property, value]) => [property, normalizeRgbaAlphaInCssValue(String(value ?? ""))])
+        .filter(([, value]) => String(value).trim() !== "");
       if (entries.length === 0) {
         continue;
       }
@@ -2947,6 +2982,10 @@
       patch.runtimeFonts ||
       patch.runtime_fonts ||
       null;
+    const selectorMap =
+      patch.selectorMap ||
+      patch.selector_map ||
+      null;
     const theme =
       patch.theme ||
       patch.Theme ||
@@ -2955,6 +2994,7 @@
     return {
       version: Number(patch.version || 1),
       elementsMap: ensurePlainObject(patch.elementsMap || patch.elements),
+      selectorMap: normalizeSelectorMap(selectorMap),
       overridesMeta: ensurePlainObject(patch.overridesMeta || patch.overrides_meta),
       attributesMeta: ensurePlainObject(patch.attributesMeta || patch.attributes_meta),
       linksMeta: ensurePlainObject(patch.linksMeta || patch.links_meta),
@@ -2964,6 +3004,20 @@
       runtimeFonts: runtimeFonts ? normalizeRuntimeFonts(runtimeFonts) : null,
       theme: theme ? normalizeThemeState(theme) : null,
     };
+  }
+
+  function normalizeSelectorMap(value) {
+    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const result = {};
+    for (const [relId, selectorValue] of Object.entries(raw)) {
+      const safeRelId = String(relId || "").trim();
+      const safeSelector = String(selectorValue || "").trim();
+      if (!safeRelId || !safeSelector) {
+        continue;
+      }
+      result[safeRelId] = safeSelector;
+    }
+    return result;
   }
 
   function normalizeRuntimeLibraries(value) {
@@ -3238,6 +3292,51 @@
     return fallback || "#ffffff";
   }
 
+  function normalizeRgbaAlphaInCssValue(value) {
+    const raw = String(value ?? "");
+    if (!raw) {
+      return raw;
+    }
+    return raw.replace(/rgba\s*\(\s*([^)]+)\)/gi, (fullMatch, rawArgs) => {
+      const parts = String(rawArgs || "")
+        .split(",")
+        .map((part) => part.trim());
+      if (parts.length < 4) {
+        return fullMatch;
+      }
+
+      const alpha = normalizeAlphaComponent(parts[3]);
+      if (alpha === null) {
+        return fullMatch;
+      }
+
+      return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${formatAlphaValue(alpha)})`;
+    });
+  }
+
+  function normalizeAlphaComponent(input) {
+    const parsed = Number(String(input || "").trim());
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+
+    let normalized = parsed;
+    if (normalized > 1) {
+      normalized = normalized <= 255 ? normalized / 255 : 1;
+    }
+    normalized = clamp(normalized, 0, 1);
+    return normalized;
+  }
+
+  function formatAlphaValue(value) {
+    const normalized = clamp(Number(value), 0, 1);
+    const rounded = Math.round(normalized * 1000) / 1000;
+    if (Number.isInteger(rounded)) {
+      return String(rounded);
+    }
+    return String(rounded).replace(/(\.\d*?[1-9])0+$/g, "$1").replace(/\.0+$/g, "");
+  }
+
   function normalizeEnumValue(input, allowed, fallback) {
     const value = String(input || "").trim().toLowerCase();
     return allowed.includes(value) ? value : fallback;
@@ -3249,6 +3348,7 @@
     const themeDiff = JSON.stringify(normalizeThemeState(state.theme)) !== JSON.stringify(normalizeThemeState(state.defaultsTheme));
     return (
       Object.keys(state.overridesMeta).length > 0 ||
+      Object.keys(state.selectorMap).length > 0 ||
       Object.keys(state.attributesMeta).length > 0 ||
       Object.keys(state.linksMeta).length > 0 ||
       state.addedNodes.length > 0 ||
