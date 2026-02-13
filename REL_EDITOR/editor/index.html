@@ -47,7 +47,13 @@
       </div>
 
       <div class="tab-content" data-tab-content="add">
-        <p>Placeholder for add tab (MVP later).</p>
+        <div class="add-help">Drag a component into the iframe to append it into a container.</div>
+        <h3 class="add-title">Basic Elements</h3>
+        <div id="addBasicList" class="add-list"></div>
+        <div id="addExternalSection" class="add-external hidden">
+          <h3 class="add-title">Library Blocks</h3>
+          <div id="addExternalList" class="add-list"></div>
+        </div>
       </div>
     </section>
 
@@ -56,8 +62,101 @@
     </section>
 
     <section class="panel panel-right">
-      <h2>Style Controls</h2>
-      <div id="controlsContainer" class="controls"></div>
+      <h2>Inspector</h2>
+
+      <section class="inspector-section">
+        <h3>Element Attributes</h3>
+        <label class="control-item">
+          <span>ID</span>
+          <input id="attrIdInput" type="text" placeholder="main-title">
+        </label>
+        <label class="control-item">
+          <span>Class</span>
+          <input id="attrClassInput" type="text" placeholder="class-one class-two">
+        </label>
+      </section>
+
+      <section id="linkSettingsSection" class="inspector-section">
+        <h3>Link Settings</h3>
+        <label id="makeLinkRow" class="check-row">
+          <input id="makeLinkCheckbox" type="checkbox">
+          <span>Make this element a link</span>
+        </label>
+        <label class="control-item">
+          <span>href</span>
+          <input id="linkHrefInput" type="text" placeholder="https://example.com">
+        </label>
+        <label class="control-item">
+          <span>target</span>
+          <select id="linkTargetInput">
+            <option value="">(empty)</option>
+            <option value="_self">_self</option>
+            <option value="_blank">_blank</option>
+          </select>
+        </label>
+        <label class="control-item">
+          <span>rel</span>
+          <input id="linkRelInput" type="text" placeholder="noopener noreferrer">
+        </label>
+        <label class="control-item">
+          <span>title</span>
+          <input id="linkTitleInput" type="text" placeholder="Link title">
+        </label>
+      </section>
+
+      <section id="imageSettingsSection" class="inspector-section hidden">
+        <h3>Image Settings</h3>
+        <label class="control-item">
+          <span>src</span>
+          <input id="imageSrcInput" type="text" placeholder="rel_editor/assets/photo.png">
+        </label>
+        <label class="control-item">
+          <span>alt</span>
+          <input id="imageAltInput" type="text" placeholder="Image description">
+        </label>
+        <label class="control-item">
+          <span>width</span>
+          <input id="imageWidthInput" type="text" placeholder="300">
+        </label>
+        <label class="control-item">
+          <span>height</span>
+          <input id="imageHeightInput" type="text" placeholder="200">
+        </label>
+        <label class="control-item">
+          <span>object-fit</span>
+          <select id="imageObjectFitInput">
+            <option value="">(empty)</option>
+            <option value="fill">fill</option>
+            <option value="contain">contain</option>
+            <option value="cover">cover</option>
+            <option value="none">none</option>
+            <option value="scale-down">scale-down</option>
+          </select>
+        </label>
+        <label class="control-item">
+          <span>border-radius</span>
+          <input id="imageBorderRadiusInput" type="text" placeholder="8px">
+        </label>
+        <label class="control-item">
+          <span>display</span>
+          <select id="imageDisplayInput">
+            <option value="">(empty)</option>
+            <option value="block">block</option>
+            <option value="inline-block">inline-block</option>
+            <option value="inline">inline</option>
+            <option value="none">none</option>
+          </select>
+        </label>
+        <div class="upload-row">
+          <button id="uploadImageBtn" type="button">Upload Image</button>
+          <input id="uploadImageInput" type="file" accept="image/*" hidden>
+        </div>
+      </section>
+
+      <section class="inspector-section">
+        <h3>Style Controls</h3>
+        <div id="controlsContainer" class="controls"></div>
+      </section>
     </section>
   </main>
 

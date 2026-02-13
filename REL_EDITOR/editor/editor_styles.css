@@ -113,6 +113,10 @@ button:hover {
   border-left: 1px solid var(--line);
 }
 
+.panel-right h2 {
+  margin-top: 0;
+}
+
 .tabs {
   display: flex;
   gap: 6px;
@@ -199,6 +203,20 @@ button:hover {
   gap: 8px;
 }
 
+.inspector-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  margin-bottom: 10px;
+  padding: 8px;
+}
+
+.inspector-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #5a4f42;
+}
+
 .control-item {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -213,6 +231,75 @@ button:hover {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.upload-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.add-help {
+  font-size: 12px;
+  color: #5f5346;
+  margin-bottom: 8px;
+}
+
+.add-title {
+  font-size: 13px;
+  margin: 10px 0 6px;
+}
+
+.add-list {
+  display: grid;
+  gap: 6px;
+}
+
+.add-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  cursor: grab;
+  text-align: left;
+  font-size: 12px;
+}
+
+.add-item:active {
+  cursor: grabbing;
+}
+
+.add-item .add-item-name {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.add-item .add-item-desc {
+  color: #6a5d4e;
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.add-badge {
+  display: inline-block;
+  font-size: 10px;
+  color: #8f3d1f;
+  border: 1px solid #d29172;
+  border-radius: 10px;
+  padding: 1px 6px;
+  margin-left: 6px;
 }
 
 @media (max-width: 1200px) {

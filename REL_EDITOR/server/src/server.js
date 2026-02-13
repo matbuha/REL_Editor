@@ -1,6 +1,8 @@
 const path = require("path");
 const fs = require("fs/promises");
+const crypto = require("crypto");
 const express = require("express");
+const multer = require("multer");
 const mime = require("mime-types");
 const { injectRuntimeAssets } = require("./inject");
 const {
@@ -19,9 +21,15 @@ async function main() {
   const config = await loadRelConfig(ROOT_DIR);
   let currentProjectRoot = normalizeProjectRoot(ROOT_DIR, config.default_project_root);
   let currentIndexPath = (config.default_index_path || "index.html").replace(/\\/g, "/");
+  const externalStyles = sanitizeExternalList(config.externalStyles);
+  const externalScripts = sanitizeExternalList(config.externalScripts);
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+  });
 
   const editorDir = path.resolve(ROOT_DIR, "REL_EDITOR", "editor");
   const runtimeDir = path.resolve(ROOT_DIR, "REL_EDITOR", "runtime");
@@ -38,6 +46,8 @@ async function main() {
       project_root: currentProjectRoot,
       index_path: currentIndexPath,
       iframe_src: `/project/${encodePathForUrl(currentIndexPath)}`,
+      external_styles: externalStyles,
+      external_scripts: externalScripts,
     });
   });
 
@@ -64,6 +74,8 @@ async function main() {
         project_root: currentProjectRoot,
         index_path: currentIndexPath,
         iframe_src: `/project/${encodePathForUrl(currentIndexPath)}`,
+        external_styles: externalStyles,
+        external_scripts: externalScripts,
       });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -91,6 +103,9 @@ async function main() {
         index_path: currentIndexPath,
         elements: {},
         overrides_meta: {},
+        attributes_meta: {},
+        links_meta: {},
+        added_nodes: [],
       };
       const overrideCss = typeof body.override_css === "string" ? body.override_css : "";
 
@@ -125,6 +140,46 @@ async function main() {
     }
   });
 
+  app.post("/api/upload-image", (req, res) => {
+    upload.single("image")(req, res, async (uploadError) => {
+      if (uploadError) {
+        res.status(400).json({ ok: false, error: uploadError.message || "Upload failed" });
+        return;
+      }
+
+      try {
+        if (!req.file) {
+          throw new Error("No image file provided");
+        }
+
+        if (!req.file.mimetype || !req.file.mimetype.startsWith("image/")) {
+          throw new Error("File must be an image");
+        }
+
+        const assetsDir = path.join(currentProjectRoot, "rel_editor", "assets");
+        await fs.mkdir(assetsDir, { recursive: true });
+
+        const extension = resolveImageExtension(req.file.originalname, req.file.mimetype);
+        const filename = `img-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${extension}`;
+        const targetPath = path.join(assetsDir, filename);
+
+        await fs.writeFile(targetPath, req.file.buffer);
+
+        const relativePath = `rel_editor/assets/${filename}`;
+        const projectUrl = `/project/${encodePathForUrl(relativePath)}`;
+
+        res.json({
+          ok: true,
+          relative_path: relativePath,
+          project_url: projectUrl,
+          file_name: filename,
+        });
+      } catch (error) {
+        res.status(400).json({ ok: false, error: error.message });
+      }
+    });
+  });
+
   app.get("/project", async (req, res) => {
     res.redirect(`/project/${encodePathForUrl(currentIndexPath)}`);
   });
@@ -149,6 +204,8 @@ async function main() {
           runtimeCssHref: "/runtime/overlay.css",
           runtimeJsHref: "/runtime/overlay.js",
           overrideCssHref: hasOverride ? "/project/rel_editor/override.css" : null,
+          externalStyleHrefs: externalStyles,
+          externalScriptSrcs: externalScripts,
         });
 
         res.type("html").send(injected);
@@ -194,6 +251,35 @@ async function validateIndexPath(projectRoot, indexPath) {
     throw new Error("index_path must point to an HTML file");
   }
   return path.relative(projectRoot, absolute).replace(/\\/g, "/");
+}
+
+function sanitizeExternalList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => String(entry || "").trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function resolveImageExtension(originalName, mimeType) {
+  const allowed = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]);
+  const extFromName = path.extname(String(originalName || "")).toLowerCase();
+  if (allowed.has(extFromName)) {
+    return extFromName;
+  }
+
+  const mimeToExt = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+    "image/bmp": ".bmp",
+    "image/avif": ".avif",
+  };
+
+  return mimeToExt[mimeType] || ".png";
 }
 
 main().catch((error) => {

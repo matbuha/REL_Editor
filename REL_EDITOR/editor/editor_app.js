@@ -22,16 +22,45 @@
     { label: "justify-content", property: "justify-content", type: "select", options: ["", "flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"] },
     { label: "align-items", property: "align-items", type: "select", options: ["", "stretch", "flex-start", "center", "flex-end", "baseline"] },
     { label: "gap", property: "gap", type: "text", placeholder: "0px" },
+    { label: "object-fit", property: "object-fit", type: "select", options: ["", "fill", "contain", "cover", "none", "scale-down"] },
+  ];
+
+  const basicComponents = [
+    { type: "section", name: "Section", description: "Structural section block", props: { text: "New section" } },
+    { type: "container", name: "Container", description: "Generic div container", props: { text: "Container" } },
+    { type: "heading-h1", name: "Heading H1", description: "Large title", props: { text: "Heading H1" } },
+    { type: "heading-h2", name: "Heading H2", description: "Section title", props: { text: "Heading H2" } },
+    { type: "heading-h3", name: "Heading H3", description: "Sub section title", props: { text: "Heading H3" } },
+    { type: "paragraph", name: "Paragraph", description: "Text block", props: { text: "Paragraph text" } },
+    { type: "button", name: "Button", description: "Clickable button", props: { text: "Button" } },
+    { type: "image", name: "Image", description: "Image placeholder", props: { alt: "Image" } },
+    { type: "link", name: "Link", description: "Anchor element", props: { text: "Link", href: "#" } },
+    { type: "card", name: "Card", description: "Ready card structure", props: {} },
+    { type: "spacer", name: "Spacer", description: "Vertical spacing element", props: { height: "24px" } },
+    { type: "divider", name: "Divider", description: "Horizontal rule", props: {} },
+  ];
+
+  const bootstrapComponents = [
+    { type: "bootstrap-card", name: "Bootstrap Card", description: "Card block", props: {} },
+    { type: "bootstrap-button", name: "Bootstrap Button", description: "Button with btn classes", props: { text: "Bootstrap Button" } },
+    { type: "bootstrap-grid", name: "Grid Row + Col", description: "Row with two columns", props: {} },
+    { type: "bootstrap-navbar", name: "Navbar", description: "Bootstrap navbar", props: {} },
   ];
 
   const state = {
     projectRoot: "",
     indexPath: "index.html",
+    externalStyles: [],
+    externalScripts: [],
     selectedRelId: null,
     elementsMap: {},
     overridesMeta: {},
+    attributesMeta: {},
+    linksMeta: {},
+    addedNodes: [],
     lastSelection: null,
     lastTreeSnapshot: [],
+    overlayReady: false,
   };
 
   const dom = {
@@ -47,16 +76,40 @@
     refreshTreeBtn: document.getElementById("refreshTreeBtn"),
     treeContainer: document.getElementById("treeContainer"),
     treeSearchInput: document.getElementById("treeSearchInput"),
+    addBasicList: document.getElementById("addBasicList"),
+    addExternalList: document.getElementById("addExternalList"),
+    addExternalSection: document.getElementById("addExternalSection"),
+    attrIdInput: document.getElementById("attrIdInput"),
+    attrClassInput: document.getElementById("attrClassInput"),
+    makeLinkRow: document.getElementById("makeLinkRow"),
+    makeLinkCheckbox: document.getElementById("makeLinkCheckbox"),
+    linkHrefInput: document.getElementById("linkHrefInput"),
+    linkTargetInput: document.getElementById("linkTargetInput"),
+    linkRelInput: document.getElementById("linkRelInput"),
+    linkTitleInput: document.getElementById("linkTitleInput"),
+    imageSettingsSection: document.getElementById("imageSettingsSection"),
+    imageSrcInput: document.getElementById("imageSrcInput"),
+    imageAltInput: document.getElementById("imageAltInput"),
+    imageWidthInput: document.getElementById("imageWidthInput"),
+    imageHeightInput: document.getElementById("imageHeightInput"),
+    imageObjectFitInput: document.getElementById("imageObjectFitInput"),
+    imageBorderRadiusInput: document.getElementById("imageBorderRadiusInput"),
+    imageDisplayInput: document.getElementById("imageDisplayInput"),
+    uploadImageBtn: document.getElementById("uploadImageBtn"),
+    uploadImageInput: document.getElementById("uploadImageInput"),
   };
 
-  init();
+  init().catch((error) => {
+    setStatus(`Init failed: ${error.message}`, true);
+  });
 
   async function init() {
     setupTabs();
-    buildControls();
+    buildStyleControls();
     bindEvents();
     await loadProjectInfo();
     await loadPatchInfo();
+    buildAddPanel();
     loadIframe();
   }
 
@@ -79,14 +132,69 @@
 
     dom.treeSearchInput.addEventListener("input", (event) => {
       const query = event.target.value.trim().toLowerCase();
-      renderTree(state.lastTreeSnapshot || [], query);
+      renderTree(state.lastTreeSnapshot, query);
     });
 
     dom.iframe.addEventListener("load", () => {
-      requestTreeSnapshot();
+      if (!state.overlayReady) {
+        setStatus("Preview loaded");
+      }
+    });
+
+    dom.attrIdInput.addEventListener("input", () => {
+      applyAttributeEdit("id", dom.attrIdInput.value);
+    });
+
+    dom.attrClassInput.addEventListener("input", () => {
+      applyAttributeEdit("class", dom.attrClassInput.value);
+    });
+
+    dom.makeLinkCheckbox.addEventListener("change", () => {
+      applyLinkSettingsFromPanel();
+    });
+    dom.linkHrefInput.addEventListener("input", () => {
+      applyLinkSettingsFromPanel();
+    });
+    dom.linkTargetInput.addEventListener("change", () => {
+      applyLinkSettingsFromPanel();
+    });
+    dom.linkRelInput.addEventListener("input", () => {
+      applyLinkSettingsFromPanel();
+    });
+    dom.linkTitleInput.addEventListener("input", () => {
+      applyLinkSettingsFromPanel();
+    });
+
+    dom.imageSrcInput.addEventListener("input", () => {
+      applyAttributeEdit("src", dom.imageSrcInput.value);
+    });
+    dom.imageAltInput.addEventListener("input", () => {
+      applyAttributeEdit("alt", dom.imageAltInput.value);
+    });
+    dom.imageWidthInput.addEventListener("input", () => {
+      applyAttributeEdit("width", dom.imageWidthInput.value);
+    });
+    dom.imageHeightInput.addEventListener("input", () => {
+      applyAttributeEdit("height", dom.imageHeightInput.value);
+    });
+
+    dom.imageObjectFitInput.addEventListener("change", () => {
+      applyStyle("object-fit", dom.imageObjectFitInput.value);
+    });
+    dom.imageBorderRadiusInput.addEventListener("input", () => {
+      applyStyle("border-radius", dom.imageBorderRadiusInput.value);
+    });
+    dom.imageDisplayInput.addEventListener("change", () => {
+      applyStyle("display", dom.imageDisplayInput.value);
+    });
+
+    dom.uploadImageBtn.addEventListener("click", () => {
+      dom.uploadImageInput.click();
+    });
+    dom.uploadImageInput.addEventListener("change", async () => {
+      await uploadImageFromInput();
     });
   }
-
   function setupTabs() {
     const buttons = Array.from(document.querySelectorAll(".tab-btn"));
     const contents = Array.from(document.querySelectorAll("[data-tab-content]"));
@@ -94,11 +202,9 @@
     for (const btn of buttons) {
       btn.addEventListener("click", () => {
         const key = btn.getAttribute("data-tab");
-
         for (const b of buttons) {
           b.classList.toggle("active", b === btn);
         }
-
         for (const c of contents) {
           c.classList.toggle("active", c.getAttribute("data-tab-content") === key);
         }
@@ -106,7 +212,7 @@
     }
   }
 
-  function buildControls() {
+  function buildStyleControls() {
     dom.controlsContainer.innerHTML = "";
 
     for (const control of controlsSchema) {
@@ -133,17 +239,80 @@
       }
 
       input.addEventListener("input", () => {
-        if (!state.selectedRelId) {
-          return;
-        }
-        const value = input.value;
-        applyStyle(control.property, value);
+        applyStyle(control.property, input.value);
       });
 
       row.appendChild(caption);
       row.appendChild(input);
       dom.controlsContainer.appendChild(row);
     }
+  }
+
+  function buildAddPanel() {
+    renderComponentList(dom.addBasicList, basicComponents, false);
+
+    const bootstrapActive = state.externalStyles.some((href) => /bootstrap/i.test(href));
+    dom.addExternalSection.classList.toggle("hidden", !bootstrapActive);
+    dom.addExternalList.innerHTML = "";
+    if (bootstrapActive) {
+      renderComponentList(dom.addExternalList, bootstrapComponents, true);
+    }
+  }
+
+  function renderComponentList(container, components, markExternal) {
+    container.innerHTML = "";
+    for (const component of components) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "add-item";
+      item.draggable = true;
+      item.setAttribute("data-component-type", component.type);
+
+      const name = document.createElement("div");
+      name.className = "add-item-name";
+      name.textContent = component.name;
+
+      if (markExternal) {
+        const badge = document.createElement("span");
+        badge.className = "add-badge";
+        badge.textContent = "CDN";
+        name.appendChild(badge);
+      }
+
+      const desc = document.createElement("div");
+      desc.className = "add-item-desc";
+      desc.textContent = component.description;
+
+      item.appendChild(name);
+      item.appendChild(desc);
+
+      item.addEventListener("dragstart", (event) => {
+        const nodeTemplate = createNodeTemplate(component);
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", component.type);
+        sendToOverlay({
+          type: "REL_SET_DRAG_COMPONENT",
+          payload: { nodeTemplate },
+        });
+        setStatus(`Dragging ${component.name} into preview`);
+      });
+
+      item.addEventListener("dragend", () => {
+        sendToOverlay({ type: "REL_CLEAR_DRAG_COMPONENT" });
+      });
+
+      container.appendChild(item);
+    }
+  }
+
+  function createNodeTemplate(component) {
+    return {
+      nodeId: generateId("node"),
+      relId: generateId("rel-added"),
+      type: component.type,
+      position: "append",
+      props: component.props || {},
+    };
   }
 
   async function loadProjectInfo() {
@@ -156,6 +325,8 @@
     const data = await response.json();
     state.projectRoot = data.project_root;
     state.indexPath = data.index_path;
+    state.externalStyles = Array.isArray(data.external_styles) ? data.external_styles : [];
+    state.externalScripts = Array.isArray(data.external_scripts) ? data.external_scripts : [];
     dom.projectRootInput.value = data.project_root;
     dom.indexPathInput.value = data.index_path;
     setStatus(`Loaded project: ${data.project_root}`);
@@ -181,18 +352,28 @@
 
     state.projectRoot = data.project_root;
     state.indexPath = data.index_path;
+    state.externalStyles = Array.isArray(data.external_styles) ? data.external_styles : [];
+    state.externalScripts = Array.isArray(data.external_scripts) ? data.external_scripts : [];
     state.selectedRelId = null;
     state.elementsMap = {};
     state.overridesMeta = {};
+    state.attributesMeta = {};
+    state.linksMeta = {};
+    state.addedNodes = [];
     state.lastSelection = null;
     state.lastTreeSnapshot = [];
+    state.overlayReady = false;
 
     await loadPatchInfo();
+    buildAddPanel();
+    clearSelectionUi();
     loadIframe();
     setStatus(`Project loaded: ${data.project_root}`);
   }
 
   function loadIframe() {
+    state.overlayReady = false;
+    setStatus("Loading preview...");
     const url = `/project/${encodePath(state.indexPath)}`;
     dom.iframe.src = url;
   }
@@ -211,12 +392,22 @@
       index_path: state.indexPath,
       elements: {},
       overrides_meta: {},
+      attributes_meta: {},
+      links_meta: {},
+      added_nodes: [],
     };
 
     state.elementsMap = patch.elements || {};
     state.overridesMeta = patch.overrides_meta || {};
+    state.attributesMeta = patch.attributes_meta || {};
+    state.linksMeta = patch.links_meta || {};
+    state.addedNodes = Array.isArray(patch.added_nodes) ? patch.added_nodes : [];
 
-    if (Object.keys(state.overridesMeta).length > 0) {
+    if (
+      Object.keys(state.overridesMeta).length > 0 ||
+      Object.keys(state.attributesMeta).length > 0 ||
+      state.addedNodes.length > 0
+    ) {
       setStatus("Patch loaded");
     }
   }
@@ -228,6 +419,9 @@
       index_path: state.indexPath,
       elements: state.elementsMap,
       overrides_meta: state.overridesMeta,
+      attributes_meta: state.attributesMeta,
+      links_meta: state.linksMeta,
+      added_nodes: state.addedNodes,
     };
 
     const overrideCss = buildOverrideCss(state.overridesMeta);
@@ -262,6 +456,39 @@
     setStatus(`Exported: ${data.result.html}`);
   }
 
+  async function uploadImageFromInput() {
+    if (!state.selectedRelId || !state.lastSelection || !state.lastSelection.isImage) {
+      setStatus("Select an image element before uploading", true);
+      dom.uploadImageInput.value = "";
+      return;
+    }
+
+    const file = dom.uploadImageInput.files && dom.uploadImageInput.files[0];
+    if (!file) {
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const response = await fetch("/api/upload-image", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+    dom.uploadImageInput.value = "";
+
+    if (!response.ok || !data.ok) {
+      setStatus(data.error || "Image upload failed", true);
+      return;
+    }
+
+    const relativePath = data.relative_path || "";
+    dom.imageSrcInput.value = relativePath;
+    applyAttributeEdit("src", relativePath);
+    setStatus(`Image uploaded: ${data.file_name}`);
+  }
+
   function onMessageFromOverlay(event) {
     if (event.source !== dom.iframe.contentWindow) {
       return;
@@ -271,15 +498,40 @@
     }
 
     const msg = event.data || {};
+    if (msg.type === "REL_OVERLAY_READY") {
+      state.overlayReady = true;
+      applyPatchToOverlay();
+      requestTreeSnapshot();
+      setStatus("Overlay ready");
+      return;
+    }
 
     if (msg.type === "REL_SELECTION") {
       handleSelection(msg.payload);
       return;
     }
 
+    if (msg.type === "REL_SELECTION_CLEARED") {
+      state.selectedRelId = null;
+      state.lastSelection = null;
+      clearSelectionUi();
+      return;
+    }
+
     if (msg.type === "REL_TREE_SNAPSHOT") {
-      state.lastTreeSnapshot = msg.payload || [];
+      state.lastTreeSnapshot = Array.isArray(msg.payload) ? msg.payload : [];
       renderTree(state.lastTreeSnapshot, dom.treeSearchInput.value.trim().toLowerCase());
+      return;
+    }
+
+    if (msg.type === "REL_NODE_ADDED") {
+      handleNodeAdded(msg.payload);
+      return;
+    }
+
+    if (msg.type === "REL_ATTRIBUTE_ERROR") {
+      const details = msg.payload || {};
+      setStatus(details.message || "Attribute update failed", true);
     }
   }
 
@@ -292,38 +544,113 @@
     state.lastSelection = payload;
     state.elementsMap[payload.relId] = payload.fallbackSelector || state.elementsMap[payload.relId] || "";
 
-    const currentOverride = state.overridesMeta[payload.relId] || {};
-    updateSelectionInfo(payload, currentOverride);
-    updateControlValues(payload.computed || {}, currentOverride);
+    const overrides = state.overridesMeta[payload.relId] || {};
+    const attrs = state.attributesMeta[payload.relId] || {};
+    const links = state.linksMeta[payload.relId] || {};
+
+    updateSelectionInfo(payload, overrides, attrs, links);
+    updateStyleControlValues(payload.computed || {}, overrides);
+    updateAttributesPanel(payload, attrs);
+    updateLinkPanel(payload, links);
+    updateImagePanel(payload, attrs, overrides);
     markActiveTreeNode(payload.relId);
   }
 
-  function updateSelectionInfo(selection, overrides) {
+  function clearSelectionUi() {
+    dom.selectionInfo.textContent = "No element selected.";
+    dom.attrIdInput.value = "";
+    dom.attrClassInput.value = "";
+    dom.makeLinkCheckbox.checked = false;
+    dom.linkHrefInput.value = "";
+    dom.linkTargetInput.value = "";
+    dom.linkRelInput.value = "";
+    dom.linkTitleInput.value = "";
+    dom.imageSrcInput.value = "";
+    dom.imageAltInput.value = "";
+    dom.imageWidthInput.value = "";
+    dom.imageHeightInput.value = "";
+    dom.imageObjectFitInput.value = "";
+    dom.imageBorderRadiusInput.value = "";
+    dom.imageDisplayInput.value = "";
+    dom.imageSettingsSection.classList.add("hidden");
+
+    const rows = dom.controlsContainer.querySelectorAll("[data-property]");
+    for (const row of rows) {
+      const input = row.querySelector("input, select");
+      input.value = "";
+    }
+  }
+
+  function updateSelectionInfo(selection, overrides, attrs, links) {
+    const effectiveId = getEffectiveValue(attrs.id, selection.attributes && selection.attributes.id);
+    const effectiveClass = getEffectiveValue(attrs.class, selection.attributes && selection.attributes.class);
+    const linkState = Object.keys(links).length ? links : selection.link || {};
+
     const lines = [
       `relId: ${selection.relId}`,
       `tagName: ${selection.tagName || ""}`,
-      `id: ${selection.id || ""}`,
-      `class: ${selection.className || ""}`,
-      `src/href: ${selection.srcOrHref || ""}`,
-      `alt: ${selection.alt || ""}`,
+      `id: ${effectiveId || ""}`,
+      `class: ${effectiveClass || ""}`,
+      `src/href: ${(selection.srcOrHref || "").trim()}`,
+      `alt: ${getEffectiveValue(attrs.alt, selection.attributes && selection.attributes.alt) || ""}`,
       `rect: x=${Math.round(selection.rect?.x || 0)}, y=${Math.round(selection.rect?.y || 0)}, w=${Math.round(selection.rect?.width || 0)}, h=${Math.round(selection.rect?.height || 0)}`,
       "",
       "Overrides:",
       Object.keys(overrides).length ? JSON.stringify(overrides, null, 2) : "(none)",
+      "",
+      "Attribute Overrides:",
+      Object.keys(attrs).length ? JSON.stringify(attrs, null, 2) : "(none)",
+      "",
+      "Link Overrides:",
+      Object.keys(linkState).length ? JSON.stringify(linkState, null, 2) : "(none)",
     ];
 
     dom.selectionInfo.textContent = lines.join("\n");
   }
 
-  function updateControlValues(computed, overrides) {
+  function updateStyleControlValues(computed, overrides) {
     const rows = dom.controlsContainer.querySelectorAll("[data-property]");
-
     for (const row of rows) {
       const property = row.getAttribute("data-property");
       const input = row.querySelector("input, select");
-      const value = overrides[property] ?? computed[property] ?? "";
-      input.value = value;
+      input.value = overrides[property] ?? computed[property] ?? "";
     }
+  }
+
+  function updateAttributesPanel(selection, attrs) {
+    dom.attrIdInput.value = getEffectiveValue(attrs.id, selection.attributes && selection.attributes.id) || "";
+    dom.attrClassInput.value = getEffectiveValue(attrs.class, selection.attributes && selection.attributes.class) || "";
+  }
+
+  function updateLinkPanel(selection, linkOverrides) {
+    const linkData = Object.keys(linkOverrides).length ? linkOverrides : (selection.link || {});
+    const isAnchor = Boolean(selection.isAnchor || (selection.link && selection.link.isAnchor));
+    const makeLinkLabel = selection.isImage ? "Wrap image with link" : "Make this element a link";
+    dom.makeLinkRow.querySelector("span").textContent = makeLinkLabel;
+    dom.makeLinkRow.classList.toggle("hidden", isAnchor);
+
+    const enabled = isAnchor ? true : Boolean(linkData.enabled);
+    dom.makeLinkCheckbox.checked = enabled;
+    dom.linkHrefInput.value = linkData.href || "";
+    dom.linkTargetInput.value = linkData.target || "";
+    dom.linkRelInput.value = linkData.rel || "";
+    dom.linkTitleInput.value = linkData.title || "";
+  }
+
+  function updateImagePanel(selection, attrs, overrides) {
+    const isImage = Boolean(selection.isImage);
+    dom.imageSettingsSection.classList.toggle("hidden", !isImage);
+    if (!isImage) {
+      return;
+    }
+
+    dom.imageSrcInput.value = getEffectiveValue(attrs.src, selection.attributes && selection.attributes.src) || "";
+    dom.imageAltInput.value = getEffectiveValue(attrs.alt, selection.attributes && selection.attributes.alt) || "";
+    dom.imageWidthInput.value = getEffectiveValue(attrs.width, selection.attributes && selection.attributes.width) || "";
+    dom.imageHeightInput.value = getEffectiveValue(attrs.height, selection.attributes && selection.attributes.height) || "";
+    dom.imageObjectFitInput.value = overrides["object-fit"] ?? selection.computed?.["object-fit"] ?? "";
+    dom.imageBorderRadiusInput.value = overrides["border-radius"] ?? selection.computed?.["border-radius"] ?? "";
+    dom.imageDisplayInput.value = overrides.display ?? selection.computed?.display ?? "";
   }
 
   function applyStyle(property, value) {
@@ -336,7 +663,7 @@
       state.overridesMeta[relId] = {};
     }
 
-    if (value === "") {
+    if (String(value).trim() === "") {
       delete state.overridesMeta[relId][property];
     } else {
       state.overridesMeta[relId][property] = value;
@@ -348,14 +675,113 @@
 
     sendToOverlay({
       type: "REL_APPLY_STYLE",
+      payload: { relId, property, value },
+    });
+
+    if (state.lastSelection) {
+      updateSelectionInfo(
+        state.lastSelection,
+        state.overridesMeta[relId] || {},
+        state.attributesMeta[relId] || {},
+        state.linksMeta[relId] || {}
+      );
+    }
+  }
+
+  function applyAttributeEdit(field, rawValue) {
+    if (!state.selectedRelId) {
+      return;
+    }
+
+    const relId = state.selectedRelId;
+    const value = normalizeAttributeValue(field, rawValue);
+
+    if (field === "id" && value && idExistsInSnapshot(value, relId)) {
+      setStatus(`ID already exists: ${value}`, true);
+      return;
+    }
+
+    upsertAttributeMeta(relId, field, value);
+    sendToOverlay({
+      type: "REL_SET_ATTRIBUTES",
+      payload: { relId, attributes: { [field]: value } },
+    });
+
+    if (field === "id" || field === "class") {
+      requestTreeSnapshot();
+    }
+
+    if (state.lastSelection) {
+      updateSelectionInfo(
+        state.lastSelection,
+        state.overridesMeta[relId] || {},
+        state.attributesMeta[relId] || {},
+        state.linksMeta[relId] || {}
+      );
+    }
+  }
+
+  function applyLinkSettingsFromPanel() {
+    if (!state.selectedRelId || !state.lastSelection) {
+      return;
+    }
+
+    const relId = state.selectedRelId;
+    const isAnchor = Boolean(state.lastSelection.isAnchor);
+    const enabled = isAnchor ? true : Boolean(dom.makeLinkCheckbox.checked);
+    const href = dom.linkHrefInput.value.trim();
+    const target = dom.linkTargetInput.value.trim();
+    const rel = dom.linkRelInput.value.trim();
+    const title = dom.linkTitleInput.value.trim();
+
+    if (href && !isValidUrl(href)) {
+      setStatus("Invalid URL format for href", true);
+      return;
+    }
+
+    const linkPatch = { enabled, href, target, rel, title };
+    if (!isAnchor && !enabled && !href && !target && !rel && !title) {
+      delete state.linksMeta[relId];
+    } else {
+      state.linksMeta[relId] = linkPatch;
+    }
+
+    sendToOverlay({
+      type: "REL_SET_LINK",
       payload: {
         relId,
-        property,
-        value,
+        link: linkPatch,
       },
     });
 
-    updateSelectionInfo(state.lastSelection || {}, state.overridesMeta[relId] || {});
+    if (state.lastSelection) {
+      updateSelectionInfo(
+        state.lastSelection,
+        state.overridesMeta[relId] || {},
+        state.attributesMeta[relId] || {},
+        state.linksMeta[relId] || {}
+      );
+    }
+  }
+
+  function handleNodeAdded(payload) {
+    const node = payload && payload.node;
+    if (!node || !node.nodeId) {
+      return;
+    }
+
+    const index = state.addedNodes.findIndex((item) => item.nodeId === node.nodeId);
+    if (index >= 0) {
+      state.addedNodes[index] = node;
+    } else {
+      state.addedNodes.push(node);
+    }
+
+    if (node.relId && node.fallbackSelector) {
+      state.elementsMap[node.relId] = node.fallbackSelector;
+    }
+
+    setStatus(`Added node: ${node.type}`);
   }
 
   function requestTreeSnapshot() {
@@ -364,8 +790,9 @@
 
   function renderTree(items, searchQuery) {
     dom.treeContainer.innerHTML = "";
+    const normalizedItems = Array.isArray(items) ? items : [];
 
-    for (const item of items) {
+    for (const item of normalizedItems) {
       if (!matchesTreeNode(item, searchQuery)) {
         continue;
       }
@@ -391,7 +818,6 @@
     if (!query) {
       return true;
     }
-
     const haystack = `${node.tagName || ""} ${node.id || ""} ${node.className || ""}`.toLowerCase();
     return haystack.includes(query);
   }
@@ -406,9 +832,35 @@
   function formatTreeLabel(item) {
     const id = item.id ? `#${item.id}` : "";
     const cls = item.className
-      ? `.${item.className.trim().split(/\s+/).slice(0, 2).join(".")}`
+      ? `.${String(item.className).trim().split(/\s+/).slice(0, 2).join(".")}`
       : "";
     return `${item.tagName}${id}${cls}`;
+  }
+
+  function applyPatchToOverlay() {
+    if (!state.overlayReady) {
+      return;
+    }
+
+    sendToOverlay({
+      type: "REL_APPLY_PATCH",
+      payload: {
+        elementsMap: state.elementsMap,
+        attributesMeta: state.attributesMeta,
+        linksMeta: state.linksMeta,
+        addedNodes: state.addedNodes,
+      },
+    });
+
+    for (const relId of Object.keys(state.overridesMeta)) {
+      const props = state.overridesMeta[relId] || {};
+      for (const property of Object.keys(props)) {
+        sendToOverlay({
+          type: "REL_APPLY_STYLE",
+          payload: { relId, property, value: props[property] },
+        });
+      }
+    }
   }
 
   function buildOverrideCss(overridesMeta) {
@@ -433,12 +885,68 @@
     return lines.join("\n");
   }
 
+  function upsertAttributeMeta(relId, field, value) {
+    if (!state.attributesMeta[relId]) {
+      state.attributesMeta[relId] = {};
+    }
+
+    if (String(value).trim() === "") {
+      delete state.attributesMeta[relId][field];
+    } else {
+      state.attributesMeta[relId][field] = value;
+    }
+
+    if (Object.keys(state.attributesMeta[relId]).length === 0) {
+      delete state.attributesMeta[relId];
+    }
+  }
+
+  function normalizeAttributeValue(field, rawValue) {
+    const trimmed = String(rawValue || "").trim();
+    if (field === "class") {
+      return trimmed.split(/\s+/).filter(Boolean).join(" ");
+    }
+    if (field === "src") {
+      if (trimmed.startsWith("/project/")) {
+        return trimmed.slice("/project/".length);
+      }
+      return trimmed;
+    }
+    return trimmed;
+  }
+
+  function idExistsInSnapshot(idValue, excludeRelId) {
+    const normalized = String(idValue || "").trim();
+    if (!normalized) {
+      return false;
+    }
+    return state.lastTreeSnapshot.some((node) => node.id === normalized && node.relId !== excludeRelId);
+  }
+
+  function getEffectiveValue(overrideValue, fallbackValue) {
+    return typeof overrideValue === "undefined" ? fallbackValue : overrideValue;
+  }
+
+  function isValidUrl(url) {
+    const value = String(url || "").trim();
+    if (!value) {
+      return true;
+    }
+    if (/^javascript:/i.test(value)) {
+      return false;
+    }
+    if (/^(https?:\/\/|mailto:|tel:|#|\/|\.\/|\.\.\/)/i.test(value)) {
+      return true;
+    }
+    return false;
+  }
+
   function sendToOverlay(message) {
     const iframeWindow = dom.iframe.contentWindow;
     if (!iframeWindow) {
       return;
     }
-    iframeWindow.postMessage(message, "*");
+    iframeWindow.postMessage(message, window.location.origin);
   }
 
   function encodePath(filePath) {
@@ -452,6 +960,10 @@
 
   function cssEscape(value) {
     return String(value).replace(/"/g, '\\"');
+  }
+
+  function generateId(prefix) {
+    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
   function setStatus(message, isError) {

@@ -3,3 +3,8 @@
   outline-offset: 1px !important;
   cursor: crosshair !important;
 }
+
+.rel-editor-drop-target {
+  outline: 2px dashed #0082c8 !important;
+  outline-offset: 2px !important;
+}
