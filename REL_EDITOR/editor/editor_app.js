@@ -194,6 +194,8 @@
     selectedRelId: null,
     elementsMap: {},
     selectorMap: {},
+    attributeOverrides: {},
+    textOverrides: {},
     overridesMeta: {},
     attributesMeta: {},
     linksMeta: {},
@@ -308,6 +310,10 @@
     linkTargetInput: document.getElementById("linkTargetInput"),
     linkRelInput: document.getElementById("linkRelInput"),
     linkTitleInput: document.getElementById("linkTitleInput"),
+    textSettingsSection: document.getElementById("textSettingsSection"),
+    textContentInput: document.getElementById("textContentInput"),
+    applyTextBtn: document.getElementById("applyTextBtn"),
+    textComplexWarning: document.getElementById("textComplexWarning"),
     imageSettingsSection: document.getElementById("imageSettingsSection"),
     imageSrcInput: document.getElementById("imageSrcInput"),
     imageAltInput: document.getElementById("imageAltInput"),
@@ -399,6 +405,10 @@
     });
     dom.linkTitleInput.addEventListener("input", () => {
       applyLinkSettingsFromPanel();
+    });
+
+    dom.applyTextBtn.addEventListener("click", () => {
+      applyTextOverrideFromPanel();
     });
 
     dom.imageSrcInput.addEventListener("input", () => {
@@ -1991,6 +2001,8 @@
     state.defaultsTheme = createDefaultThemeState();
     state.theme = createDefaultThemeState();
     state.selectorMap = {};
+    state.attributeOverrides = {};
+    state.textOverrides = {};
     dom.projectRootInput.value = data.project_root;
     dom.indexPathInput.value = data.index_path;
     setStatus(`Loaded project: ${data.project_root}`);
@@ -2025,6 +2037,8 @@
     state.selectedRelId = null;
     state.elementsMap = {};
     state.selectorMap = {};
+    state.attributeOverrides = {};
+    state.textOverrides = {};
     state.overridesMeta = {};
     state.attributesMeta = {};
     state.linksMeta = {};
@@ -2064,6 +2078,8 @@
 
     state.elementsMap = normalizedPatch.elementsMap;
     state.selectorMap = normalizedPatch.selectorMap || {};
+    state.attributeOverrides = normalizedPatch.attributeOverrides || {};
+    state.textOverrides = normalizedPatch.textOverrides || {};
     state.overridesMeta = normalizedPatch.overridesMeta;
     state.attributesMeta = normalizedPatch.attributesMeta;
     state.linksMeta = normalizedPatch.linksMeta;
@@ -2086,6 +2102,8 @@
       index_path: state.indexPath,
       elementsMap: state.elementsMap,
       selectorMap: normalizeSelectorMap(state.selectorMap),
+      attributeOverrides: normalizeAttributeOverrides(state.attributeOverrides),
+      textOverrides: normalizeTextOverrides(state.textOverrides),
       overridesMeta: state.overridesMeta,
       attributesMeta: state.attributesMeta,
       linksMeta: state.linksMeta,
@@ -2218,6 +2236,12 @@
       return;
     }
 
+    if (msg.type === "REL_TEXT_ERROR") {
+      const details = msg.payload || {};
+      setStatus(details.message || "Text update failed", true);
+      return;
+    }
+
     if (msg.type === "REL_LIBRARIES_APPLIED") {
       state.runtimeLibraries = normalizeRuntimeLibraries(msg.payload || state.runtimeLibraries);
       syncLibraryControlsFromState();
@@ -2262,6 +2286,8 @@
     const overrides = state.overridesMeta[payload.relId] || {};
     const attrs = state.attributesMeta[payload.relId] || {};
     const links = state.linksMeta[payload.relId] || {};
+    const attributeOverrides = state.attributeOverrides[payload.relId] || {};
+    const textOverride = state.textOverrides[payload.relId] || {};
 
     updateSelectionInfo(payload, overrides, attrs, links);
     updateStyleControlValues(payload.computed || {}, overrides, {
@@ -2270,7 +2296,8 @@
       selection: payload,
     });
     updateAttributesPanel(payload, attrs);
-    updateLinkPanel(payload, links);
+    updateLinkPanel(payload, links, attributeOverrides);
+    updateTextPanel(payload, textOverride);
     updateImagePanel(payload, attrs, overrides);
     updateDeleteButton(payload);
     markActiveTreeNode(payload.relId);
@@ -2285,6 +2312,12 @@
     dom.linkTargetInput.value = "";
     dom.linkRelInput.value = "";
     dom.linkTitleInput.value = "";
+    dom.textContentInput.value = "";
+    dom.textContentInput.disabled = true;
+    dom.applyTextBtn.disabled = true;
+    dom.textSettingsSection.classList.add("hidden");
+    dom.textComplexWarning.classList.add("hidden");
+    dom.textComplexWarning.textContent = "";
     dom.imageSrcInput.value = "";
     dom.imageAltInput.value = "";
     dom.imageWidthInput.value = "";
@@ -2418,8 +2451,9 @@
     dom.attrClassInput.value = getEffectiveValue(attrs.class, selection.attributes && selection.attributes.class) || "";
   }
 
-  function updateLinkPanel(selection, linkOverrides) {
+  function updateLinkPanel(selection, linkOverrides, attributeOverrides) {
     const linkData = Object.keys(linkOverrides).length ? linkOverrides : (selection.link || {});
+    const attrData = attributeOverrides && typeof attributeOverrides === "object" ? attributeOverrides : {};
     const isAnchor = Boolean(selection.isAnchor || (selection.link && selection.link.isAnchor));
     const makeLinkLabel = selection.isImage ? "Wrap image with link" : "Make this element a link";
     dom.makeLinkRow.querySelector("span").textContent = makeLinkLabel;
@@ -2427,10 +2461,46 @@
 
     const enabled = isAnchor ? true : Boolean(linkData.enabled);
     dom.makeLinkCheckbox.checked = enabled;
-    dom.linkHrefInput.value = linkData.href || "";
-    dom.linkTargetInput.value = linkData.target || "";
-    dom.linkRelInput.value = linkData.rel || "";
-    dom.linkTitleInput.value = linkData.title || "";
+    dom.linkHrefInput.value = Object.prototype.hasOwnProperty.call(attrData, "href") ? String(attrData.href || "") : (linkData.href || "");
+    dom.linkTargetInput.value = Object.prototype.hasOwnProperty.call(attrData, "target") ? String(attrData.target || "") : (linkData.target || "");
+    dom.linkRelInput.value = Object.prototype.hasOwnProperty.call(attrData, "rel") ? String(attrData.rel || "") : (linkData.rel || "");
+    dom.linkTitleInput.value = Object.prototype.hasOwnProperty.call(attrData, "title") ? String(attrData.title || "") : (linkData.title || "");
+  }
+
+  function updateTextPanel(selection, textOverride) {
+    const textInfo = selection && selection.textInfo && typeof selection.textInfo === "object" ? selection.textInfo : {};
+    const isSupported = Boolean(textInfo.isTextLike);
+    dom.textSettingsSection.classList.toggle("hidden", !isSupported);
+
+    if (!isSupported) {
+      dom.textContentInput.value = "";
+      dom.textContentInput.disabled = true;
+      dom.applyTextBtn.disabled = true;
+      dom.textComplexWarning.classList.add("hidden");
+      dom.textComplexWarning.textContent = "";
+      return;
+    }
+
+    const overrideValue = textOverride && Object.prototype.hasOwnProperty.call(textOverride, "text")
+      ? String(textOverride.text || "")
+      : null;
+    const effectiveValue = overrideValue !== null
+      ? overrideValue
+      : String(textInfo.value || "");
+
+    dom.textContentInput.value = effectiveValue;
+
+    const canEdit = Boolean(textInfo.canEdit);
+    dom.textContentInput.disabled = !canEdit;
+    dom.applyTextBtn.disabled = !canEdit;
+    if (canEdit) {
+      dom.textComplexWarning.classList.add("hidden");
+      dom.textComplexWarning.textContent = "";
+      return;
+    }
+
+    dom.textComplexWarning.classList.remove("hidden");
+    dom.textComplexWarning.textContent = String(textInfo.reason || "Complex content. Text editing is disabled for this element.");
   }
 
   function updateImagePanel(selection, attrs, overrides) {
@@ -2548,6 +2618,12 @@
     } else {
       state.linksMeta[relId] = linkPatch;
     }
+    state.attributeOverrides[relId] = {
+      href,
+      target,
+      rel,
+      title,
+    };
 
     sendToOverlay({
       type: "REL_SET_LINK",
@@ -2565,6 +2641,34 @@
         state.linksMeta[relId] || {}
       );
     }
+  }
+
+  function applyTextOverrideFromPanel() {
+    if (!state.selectedRelId || !state.lastSelection) {
+      return;
+    }
+
+    const relId = state.selectedRelId;
+    const textInfo = state.lastSelection && state.lastSelection.textInfo && typeof state.lastSelection.textInfo === "object"
+      ? state.lastSelection.textInfo
+      : {};
+    if (!Boolean(textInfo.canEdit)) {
+      setStatus("Text editing is disabled for this element", true);
+      return;
+    }
+
+    const text = String(dom.textContentInput.value || "");
+    state.textOverrides[relId] = { text };
+
+    sendToOverlay({
+      type: "REL_SET_TEXT",
+      payload: {
+        relId,
+        text,
+      },
+    });
+
+    setStatus("Text updated");
   }
 
   function handleNodeAdded(payload) {
@@ -2612,6 +2716,8 @@
       delete state.attributesMeta[relId];
       delete state.linksMeta[relId];
       delete state.selectorMap[relId];
+      delete state.attributeOverrides[relId];
+      delete state.textOverrides[relId];
       state.addedNodes = state.addedNodes.filter((node) => node.relId !== relId);
       state.elementsMap[relId] = fallbackSelector || state.elementsMap[relId] || "";
     }
@@ -2698,6 +2804,7 @@
         elementsMap: state.elementsMap,
         attributesMeta: state.attributesMeta,
         linksMeta: state.linksMeta,
+        textOverrides: state.textOverrides,
         addedNodes: state.addedNodes,
         deletedNodes: state.deletedNodes,
         runtimeLibraries: state.runtimeLibraries,
@@ -2974,6 +3081,7 @@
 
   function normalizeLoadedPatch(rawPatch) {
     const patch = rawPatch && typeof rawPatch === "object" ? rawPatch : {};
+    const linksMeta = ensurePlainObject(patch.linksMeta || patch.links_meta);
     const runtimeLibraries =
       patch.runtimeLibraries ||
       patch.runtime_libraries ||
@@ -2986,6 +3094,14 @@
       patch.selectorMap ||
       patch.selector_map ||
       null;
+    const attributeOverrides =
+      patch.attributeOverrides ||
+      patch.attribute_overrides ||
+      null;
+    const textOverrides =
+      patch.textOverrides ||
+      patch.text_overrides ||
+      null;
     const theme =
       patch.theme ||
       patch.Theme ||
@@ -2997,7 +3113,9 @@
       selectorMap: normalizeSelectorMap(selectorMap),
       overridesMeta: ensurePlainObject(patch.overridesMeta || patch.overrides_meta),
       attributesMeta: ensurePlainObject(patch.attributesMeta || patch.attributes_meta),
-      linksMeta: ensurePlainObject(patch.linksMeta || patch.links_meta),
+      linksMeta,
+      attributeOverrides: normalizeAttributeOverrides(attributeOverrides, linksMeta),
+      textOverrides: normalizeTextOverrides(textOverrides),
       addedNodes: ensureArray(patch.addedNodes || patch.added_nodes),
       deletedNodes: ensureArray(patch.deletedNodes || patch.deleted_nodes),
       runtimeLibraries: runtimeLibraries ? normalizeRuntimeLibraries(runtimeLibraries) : null,
@@ -3016,6 +3134,76 @@
         continue;
       }
       result[safeRelId] = safeSelector;
+    }
+    return result;
+  }
+
+  function normalizeAttributeOverrides(value, fallbackLinksMeta) {
+    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const result = {};
+
+    for (const [relId, attrs] of Object.entries(raw)) {
+      const safeRelId = String(relId || "").trim();
+      if (!safeRelId) {
+        continue;
+      }
+      const normalizedEntry = normalizeLinkAttributeEntry(attrs);
+      if (!normalizedEntry) {
+        continue;
+      }
+      result[safeRelId] = normalizedEntry;
+    }
+
+    const legacyLinks = fallbackLinksMeta && typeof fallbackLinksMeta === "object" ? fallbackLinksMeta : {};
+    for (const [relId, linkValue] of Object.entries(legacyLinks)) {
+      const safeRelId = String(relId || "").trim();
+      if (!safeRelId || result[safeRelId]) {
+        continue;
+      }
+      const normalizedEntry = normalizeLinkAttributeEntry(linkValue);
+      if (!normalizedEntry) {
+        continue;
+      }
+      result[safeRelId] = normalizedEntry;
+    }
+
+    return result;
+  }
+
+  function normalizeLinkAttributeEntry(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+
+    const hasAnyField =
+      Object.prototype.hasOwnProperty.call(value, "href") ||
+      Object.prototype.hasOwnProperty.call(value, "target") ||
+      Object.prototype.hasOwnProperty.call(value, "rel") ||
+      Object.prototype.hasOwnProperty.call(value, "title");
+    if (!hasAnyField) {
+      return null;
+    }
+
+    return {
+      href: String(value.href || "").trim(),
+      target: String(value.target || "").trim(),
+      rel: String(value.rel || "").trim(),
+      title: String(value.title || "").trim(),
+    };
+  }
+
+  function normalizeTextOverrides(value) {
+    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const result = {};
+    for (const [relId, entry] of Object.entries(raw)) {
+      const safeRelId = String(relId || "").trim();
+      if (!safeRelId || !entry || typeof entry !== "object") {
+        continue;
+      }
+      if (!Object.prototype.hasOwnProperty.call(entry, "text")) {
+        continue;
+      }
+      result[safeRelId] = { text: String(entry.text || "") };
     }
     return result;
   }
@@ -3349,6 +3537,8 @@
     return (
       Object.keys(state.overridesMeta).length > 0 ||
       Object.keys(state.selectorMap).length > 0 ||
+      Object.keys(state.attributeOverrides).length > 0 ||
+      Object.keys(state.textOverrides).length > 0 ||
       Object.keys(state.attributesMeta).length > 0 ||
       Object.keys(state.linksMeta).length > 0 ||
       state.addedNodes.length > 0 ||
@@ -3585,13 +3775,24 @@
     if (!value) {
       return true;
     }
-    if (/^javascript:/i.test(value)) {
+    if (/\s/.test(value)) {
       return false;
     }
-    if (/^(https?:\/\/|mailto:|tel:|#|\/|\.\/|\.\.\/)/i.test(value)) {
+    if (/^(javascript|data|vbscript):/i.test(value)) {
+      return false;
+    }
+
+    const schemeMatch = value.match(/^([a-z][a-z0-9+\-.]*):/i);
+    if (schemeMatch) {
+      const scheme = String(schemeMatch[1] || "").toLowerCase();
+      return ["http", "https", "mailto", "tel"].includes(scheme);
+    }
+
+    if (/^(#|\/\/|\/|\.\/|\.\.\/)/.test(value)) {
       return true;
     }
-    return false;
+
+    return true;
   }
 
   function sendToOverlay(message) {

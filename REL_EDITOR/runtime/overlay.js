@@ -45,6 +45,7 @@
   const MANAGED_SELECTION_CLASS = "rel-editor-selected";
   const MANAGED_DROP_CLASS = "rel-editor-drop-target";
   const PROTECTED_TAGS = new Set(["HTML", "HEAD", "BODY"]);
+  const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV"]);
 
   const LIBRARY_ASSETS = {
     bootstrap: {
@@ -242,6 +243,12 @@
       return;
     }
 
+    if (message.type === "REL_SET_TEXT") {
+      const payload = message.payload || {};
+      applyTextOverride(payload.relId, payload.text || "");
+      return;
+    }
+
     if (message.type === "REL_DELETE_NODE") {
       const payload = message.payload || {};
       deleteNodeByReference({
@@ -336,6 +343,15 @@
     const linksMeta = payload.linksMeta || {};
     for (const relId of Object.keys(linksMeta)) {
       applyLinkSettings(relId, linksMeta[relId], { silent: true });
+    }
+
+    const textOverrides = payload.textOverrides || {};
+    for (const relId of Object.keys(textOverrides)) {
+      const entry = textOverrides[relId];
+      if (!entry || typeof entry !== "object" || !Object.prototype.hasOwnProperty.call(entry, "text")) {
+        continue;
+      }
+      applyTextOverride(relId, entry.text, { silent: true });
     }
 
     const deletedNodes = Array.isArray(payload.deletedNodes) ? payload.deletedNodes : [];
@@ -602,6 +618,44 @@
       postToEditor({ type: "REL_SELECTION", payload });
     }
 
+    return true;
+  }
+
+  function applyTextOverride(relId, text, options) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return false;
+    }
+
+    const opts = options || {};
+    const silent = Boolean(opts.silent);
+    const element = findElementByRelIdOrFallback(safeRelId, state.elementsMap);
+    if (!element) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_TEXT_ERROR",
+          payload: { relId: safeRelId, message: "Element not found for text update" },
+        });
+      }
+      return false;
+    }
+
+    const textInfo = getTextEditInfo(element);
+    if (!textInfo.canEdit) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_TEXT_ERROR",
+          payload: { relId: safeRelId, message: textInfo.reason || "Text editing is disabled for this element" },
+        });
+      }
+      return false;
+    }
+
+    element.textContent = String(text || "");
+    if (!silent && state.selectedElement === element) {
+      const payload = buildSelectionPayload(element, safeRelId);
+      postToEditor({ type: "REL_SELECTION", payload });
+    }
     return true;
   }
 
@@ -967,6 +1021,7 @@
     const rect = element.getBoundingClientRect();
     const linkContext = getLinkContext(element, relId);
     const stableSelector = buildStableSelector(element);
+    const textInfo = getTextEditInfo(element);
 
     const computedSubset = {};
     for (const key of TRACKED_STYLES) {
@@ -1009,6 +1064,7 @@
       isImage: element.tagName === "IMG",
       isAnchor: element.tagName === "A",
       canDelete: !isProtectedElement(element),
+      textInfo,
       computed: computedSubset,
     };
   }
@@ -1050,6 +1106,56 @@
       target: "",
       rel: "",
       title: "",
+    };
+  }
+
+  function getTextEditInfo(element) {
+    if (!(element instanceof Element)) {
+      return {
+        isTextLike: false,
+        canEdit: false,
+        value: "",
+        reason: "Element is not editable",
+      };
+    }
+
+    const isTextLike = TEXT_EDIT_TAGS.has(element.tagName);
+    if (!isTextLike) {
+      return {
+        isTextLike: false,
+        canEdit: false,
+        value: "",
+        reason: "Text editing is available for text elements only",
+      };
+    }
+
+    const childElementCount = element.children ? element.children.length : 0;
+    const textNodes = Array.from(element.childNodes || []).filter((node) => node && node.nodeType === Node.TEXT_NODE);
+    const nonWhitespaceTextNodes = textNodes.filter((node) => String(node.textContent || "").trim() !== "");
+
+    if (childElementCount > 0) {
+      return {
+        isTextLike: true,
+        canEdit: false,
+        value: String(element.textContent || ""),
+        reason: "Complex content detected. Text edit is disabled to preserve child elements.",
+      };
+    }
+
+    if (nonWhitespaceTextNodes.length > 1) {
+      return {
+        isTextLike: true,
+        canEdit: false,
+        value: String(element.textContent || ""),
+        reason: "Complex text nodes detected. Text edit is disabled.",
+      };
+    }
+
+    return {
+      isTextLike: true,
+      canEdit: true,
+      value: String(element.textContent || ""),
+      reason: "",
     };
   }
 

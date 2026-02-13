@@ -110,6 +110,8 @@ async function main() {
         index_path: currentIndexPath,
         elementsMap: {},
         selectorMap: {},
+        attributeOverrides: {},
+        textOverrides: {},
         overridesMeta: {},
         attributesMeta: {},
         linksMeta: {},
