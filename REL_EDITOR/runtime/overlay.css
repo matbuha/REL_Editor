@@ -22,6 +22,36 @@
   opacity: 1;
 }
 
+.rel-snap-guides {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483599;
+  pointer-events: none;
+}
+
+.rel-snap-guide {
+  position: absolute;
+  background: rgba(0, 130, 200, 0.45);
+  opacity: 0;
+  transition: opacity 80ms ease-out;
+}
+
+.rel-snap-guide.is-visible {
+  opacity: 1;
+}
+
+.rel-snap-guide-x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.rel-snap-guide-y {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
 .rel-resize-handle {
   position: absolute;
   width: 10px;
@@ -109,8 +139,15 @@ body.rel-resizing * {
   pointer-events: none !important;
 }
 
+html.rel-resizing,
+body.rel-resizing {
+  overflow: hidden !important;
+}
+
 body.rel-resizing .rel-resize-overlay,
 body.rel-resizing .rel-resize-overlay *,
-body.rel-resizing .rel-resize-tooltip {
+body.rel-resizing .rel-resize-tooltip,
+body.rel-resizing .rel-snap-guides,
+body.rel-resizing .rel-snap-guides * {
   pointer-events: auto !important;
 }
