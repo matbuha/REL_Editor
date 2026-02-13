@@ -25,6 +25,7 @@ async function main() {
   const externalScripts = sanitizeExternalList(config.externalScripts);
   const defaultsLibraries = normalizeDefaultsLibraries(config.defaultsLibraries);
   const defaultsFonts = normalizeDefaultsFonts(config.defaultsFonts);
+  const defaultTheme = createDefaultTheme();
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -104,7 +105,7 @@ async function main() {
     try {
       const body = req.body || {};
       const patch = body.patch || {
-        version: 2,
+        version: 3,
         project_root: currentProjectRoot,
         index_path: currentIndexPath,
         elementsMap: {},
@@ -115,6 +116,7 @@ async function main() {
         deletedNodes: [],
         runtimeLibraries: defaultsLibraries,
         runtimeFonts: defaultsFonts,
+        theme: defaultTheme,
       };
       const overrideCss = typeof body.override_css === "string" ? body.override_css : "";
 
@@ -329,6 +331,40 @@ function normalizeDefaultsFonts(value) {
   return {
     provider,
     families,
+  };
+}
+
+function createDefaultTheme() {
+  return {
+    applied: false,
+    activeThemeId: "theme-default",
+    themes: [
+      {
+        id: "theme-default",
+        name: "Default Theme",
+        colors: {
+          primary: "#2b6df8",
+          secondary: "#17b57a",
+          accent: "#f97316",
+          background: "#f6f7fb",
+          surface: "#ffffff",
+          text: "#1f2937",
+          muted: "#6b7280",
+          border: "#d1d5db",
+        },
+        customColors: {},
+        fonts: {
+          bodyFamily: "\"Segoe UI\", system-ui, sans-serif",
+          headingFamily: "\"Segoe UI\", system-ui, sans-serif",
+          bodySize: "16px",
+          h1Size: "2.5rem",
+          h2Size: "2rem",
+          h3Size: "1.5rem",
+          smallSize: "0.875rem",
+          lineHeight: "1.5",
+        },
+      },
+    ],
   };
 }
 

@@ -83,6 +83,7 @@ button:hover {
 .status {
   font-size: 12px;
   color: var(--muted);
+  pointer-events: none;
 }
 
 .layout {
@@ -345,6 +346,92 @@ button:hover {
   gap: 10px;
 }
 
+.theme-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  margin-bottom: 10px;
+  padding: 8px;
+}
+
+.theme-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #5a4f42;
+}
+
+.theme-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.theme-row input,
+.theme-row select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+  font-size: 12px;
+}
+
+.theme-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.theme-actions button {
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.theme-palette-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.theme-color-row {
+  display: grid;
+  grid-template-columns: 96px 18px 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-color-label {
+  font-size: 11px;
+  color: #604f3f;
+  text-transform: capitalize;
+}
+
+.theme-swatch {
+  width: 16px;
+  height: 16px;
+  border: 1px solid #ccb89f;
+  border-radius: 4px;
+}
+
+.theme-color-row input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-size: 11px;
+}
+
+.theme-color-row button {
+  font-size: 10px;
+  padding: 5px 7px;
+}
+
+.theme-empty {
+  font-size: 11px;
+  color: #7b6b59;
+}
+
 .control-group {
   border: 1px solid #eadfce;
   border-radius: 8px;
@@ -411,6 +498,16 @@ button:hover {
 .font-loading-warning button {
   font-size: 11px;
   padding: 5px 7px;
+}
+
+.shadow-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.shadow-advanced-grid {
+  display: grid;
+  gap: 6px;
 }
 
 .inspector-section {

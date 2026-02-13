@@ -28,6 +28,8 @@
     "border-radius",
     "border-width",
     "border-color",
+    "box-shadow",
+    "text-shadow",
     "width",
     "height",
     "display",
@@ -90,6 +92,7 @@
       provider: "none",
       families: [],
     },
+    themeCss: "",
   };
 
   document.addEventListener("click", onDocumentClick, true);
@@ -261,6 +264,12 @@
       return;
     }
 
+    if (message.type === "REL_SET_THEME") {
+      const payload = message.payload || {};
+      applyThemeCss(payload.cssText || "");
+      return;
+    }
+
     if (message.type === "REL_REQUEST_TREE") {
       postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
       return;
@@ -312,6 +321,7 @@
     state.appliedAddedNodeIds.clear();
     applyRuntimeLibraries(payload.runtimeLibraries || state.runtimeLibraries);
     applyRuntimeFonts(payload.runtimeFonts || state.runtimeFonts);
+    applyThemeCss(payload.themeCss || "");
 
     const addedNodes = Array.isArray(payload.addedNodes) ? payload.addedNodes : [];
     for (const node of addedNodes) {
@@ -1345,6 +1355,31 @@
 
     state.runtimeFonts = fonts;
     postToEditor({ type: "REL_FONTS_APPLIED", payload: fonts });
+  }
+
+  function applyThemeCss(cssText) {
+    const normalized = String(cssText || "").trim();
+    const selector = 'style[data-rel-theme-managed="1"]';
+    const existing = document.querySelector(selector);
+
+    if (!normalized) {
+      if (existing) {
+        existing.remove();
+      }
+      state.themeCss = "";
+      postToEditor({ type: "REL_THEME_APPLIED", payload: { active: false } });
+      return;
+    }
+
+    const node = existing || document.createElement("style");
+    node.dataset.relThemeManaged = "1";
+    node.textContent = normalized;
+    if (!existing) {
+      document.head.appendChild(node);
+    }
+
+    state.themeCss = normalized;
+    postToEditor({ type: "REL_THEME_APPLIED", payload: { active: true } });
   }
 
   function clearInjectedFonts() {

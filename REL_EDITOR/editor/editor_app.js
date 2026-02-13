@@ -56,6 +56,11 @@
       ],
     },
     {
+      key: "shadow",
+      title: "SHADOW",
+      controls: [{ label: "shadow", type: "shadow" }],
+    },
+    {
       key: "advanced",
       title: "Advanced",
       controls: [
@@ -81,6 +86,41 @@
     google: "Google Fonts",
     bunny: "Bunny Fonts",
     "adobe-edge": "Adobe Edge Fonts",
+  };
+
+  const THEME_COLOR_DEFS = [
+    { key: "primary", label: "Primary", varName: "--rel-primary", fallback: "#2b6df8" },
+    { key: "secondary", label: "Secondary", varName: "--rel-secondary", fallback: "#17b57a" },
+    { key: "accent", label: "Accent", varName: "--rel-accent", fallback: "#f97316" },
+    { key: "background", label: "Background", varName: "--rel-bg", fallback: "#f6f7fb" },
+    { key: "surface", label: "Surface", varName: "--rel-surface", fallback: "#ffffff" },
+    { key: "text", label: "Text", varName: "--rel-text", fallback: "#1f2937" },
+    { key: "muted", label: "Muted", varName: "--rel-muted", fallback: "#6b7280" },
+    { key: "border", label: "Border", varName: "--rel-border", fallback: "#d1d5db" },
+  ];
+
+  const THEME_COLOR_VAR_BY_KEY = THEME_COLOR_DEFS.reduce((acc, entry) => {
+    acc[entry.key] = entry.varName;
+    return acc;
+  }, {});
+
+  const DEFAULT_THEME_FONTS = {
+    bodyFamily: "\"Segoe UI\", system-ui, sans-serif",
+    headingFamily: "\"Segoe UI\", system-ui, sans-serif",
+    bodySize: "16px",
+    h1Size: "2.5rem",
+    h2Size: "2rem",
+    h3Size: "1.5rem",
+    smallSize: "0.875rem",
+    lineHeight: "1.5",
+  };
+
+  const SHADOW_PRESETS = {
+    none: "none",
+    soft: "0px 2px 8px 0px rgba(15, 23, 42, 0.12)",
+    medium: "0px 6px 18px 0px rgba(15, 23, 42, 0.2)",
+    strong: "0px 12px 30px 0px rgba(15, 23, 42, 0.28)",
+    inner: "inset 0px 2px 8px 0px rgba(15, 23, 42, 0.2)",
   };
 
   const KNOWN_SYSTEM_FAMILIES = new Set(
@@ -119,7 +159,7 @@
     { type: "pico-link", name: "Pico Link", description: "Pico link style", props: { text: "Pico Link", href: "#" } },
   ];
 
-  const PATCH_VERSION = 2;
+  const PATCH_VERSION = 3;
   const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
   const LEFT_MIN_PX = 200;
   const RIGHT_MIN_PX = 260;
@@ -149,6 +189,8 @@
       provider: "none",
       families: [],
     },
+    defaultsTheme: createDefaultThemeState(),
+    theme: createDefaultThemeState(),
     selectedRelId: null,
     elementsMap: {},
     overridesMeta: {},
@@ -175,6 +217,7 @@
       fontFamilyWarningText: null,
       fontFamilyAutoLoadBtn: null,
       backgroundType: null,
+      backgroundModeByRelId: {},
       backgroundSolidRow: null,
       backgroundGradientRow: null,
       backgroundSolidRadio: null,
@@ -183,6 +226,22 @@
       backgroundGradientInput: null,
       backgroundPreview: null,
       pendingUnloadedFontFamily: "",
+      shadowRoot: null,
+      shadowEnabledInput: null,
+      shadowTargetInput: null,
+      shadowTextTargetOption: null,
+      shadowPresetInput: null,
+      shadowRawInput: null,
+      shadowOffsetXInput: null,
+      shadowOffsetYInput: null,
+      shadowBlurInput: null,
+      shadowSpreadInput: null,
+      shadowColorInput: null,
+      shadowInsetInput: null,
+      shadowModeUpdating: false,
+      shadowValueUpdating: false,
+      themeColorRows: {},
+      themeCustomRows: {},
     },
   };
 
@@ -208,6 +267,29 @@
     fontLibraryFamilyInput: document.getElementById("fontLibraryFamilyInput"),
     addFontFamilyBtn: document.getElementById("addFontFamilyBtn"),
     fontFamiliesList: document.getElementById("fontFamiliesList"),
+    themePresetSelect: document.getElementById("themePresetSelect"),
+    themeNameInput: document.getElementById("themeNameInput"),
+    newThemePresetBtn: document.getElementById("newThemePresetBtn"),
+    saveThemePresetBtn: document.getElementById("saveThemePresetBtn"),
+    deleteThemePresetBtn: document.getElementById("deleteThemePresetBtn"),
+    themePaletteList: document.getElementById("themePaletteList"),
+    themeCustomPaletteList: document.getElementById("themeCustomPaletteList"),
+    addCustomColorBtn: document.getElementById("addCustomColorBtn"),
+    paletteColorSelect: document.getElementById("paletteColorSelect"),
+    paletteBackgroundSelect: document.getElementById("paletteBackgroundSelect"),
+    paletteBorderSelect: document.getElementById("paletteBorderSelect"),
+    applyPaletteToSelectedBtn: document.getElementById("applyPaletteToSelectedBtn"),
+    themeBodyFontSelect: document.getElementById("themeBodyFontSelect"),
+    themeHeadingFontSelect: document.getElementById("themeHeadingFontSelect"),
+    themeBodySizeInput: document.getElementById("themeBodySizeInput"),
+    themeH1SizeInput: document.getElementById("themeH1SizeInput"),
+    themeH2SizeInput: document.getElementById("themeH2SizeInput"),
+    themeH3SizeInput: document.getElementById("themeH3SizeInput"),
+    themeSmallSizeInput: document.getElementById("themeSmallSizeInput"),
+    themeLineHeightInput: document.getElementById("themeLineHeightInput"),
+    themeLoadFontsBtn: document.getElementById("themeLoadFontsBtn"),
+    applyFontsGloballyBtn: document.getElementById("applyFontsGloballyBtn"),
+    applyThemeToPageBtn: document.getElementById("applyThemeToPageBtn"),
     statusText: document.getElementById("statusText"),
     selectionInfo: document.getElementById("selectionInfo"),
     controlsContainer: document.getElementById("controlsContainer"),
@@ -244,6 +326,7 @@
   async function init() {
     setupTabs();
     buildStyleControls();
+    buildThemeManagerUi();
     clearSelectionUi();
     bindEvents();
     initResizableLayout();
@@ -251,6 +334,7 @@
     await loadPatchInfo();
     syncLibraryControlsFromState();
     syncFontControlsFromState();
+    syncThemeUiFromState();
     buildAddPanel();
     loadIframe();
   }
@@ -370,6 +454,54 @@
       event.preventDefault();
       addFontFamilyFromToolbar();
     });
+
+    dom.themePresetSelect.addEventListener("change", () => {
+      selectThemePreset(dom.themePresetSelect.value);
+    });
+    dom.newThemePresetBtn.addEventListener("click", () => {
+      createThemePresetFromUi();
+    });
+    dom.saveThemePresetBtn.addEventListener("click", () => {
+      saveActiveThemePresetFromUi();
+    });
+    dom.deleteThemePresetBtn.addEventListener("click", () => {
+      deleteActiveThemePreset();
+    });
+    dom.addCustomColorBtn.addEventListener("click", () => {
+      addCustomThemeColor();
+    });
+    dom.applyPaletteToSelectedBtn.addEventListener("click", () => {
+      applyPaletteToSelectedElement();
+    });
+    dom.themeLoadFontsBtn.addEventListener("click", () => {
+      loadThemeFonts();
+    });
+    dom.applyFontsGloballyBtn.addEventListener("click", () => {
+      applyThemeFontsGlobally();
+    });
+    dom.applyThemeToPageBtn.addEventListener("click", () => {
+      applyThemeToPage();
+    });
+
+    for (const input of [
+      dom.themeBodySizeInput,
+      dom.themeH1SizeInput,
+      dom.themeH2SizeInput,
+      dom.themeH3SizeInput,
+      dom.themeSmallSizeInput,
+      dom.themeLineHeightInput,
+    ]) {
+      input.addEventListener("input", () => {
+        updateThemeFontsFromUi();
+      });
+    }
+
+    dom.themeBodyFontSelect.addEventListener("change", () => {
+      updateThemeFontsFromUi();
+    });
+    dom.themeHeadingFontSelect.addEventListener("change", () => {
+      updateThemeFontsFromUi();
+    });
   }
 
   function onEditorKeyDown(event) {
@@ -437,6 +569,528 @@
     }
   }
 
+  function buildThemeManagerUi() {
+    renderThemePaletteRows();
+    renderThemePresetOptions();
+    renderPaletteVarOptions();
+    rebuildThemeFontPresetOptions();
+  }
+
+  function syncThemeUiFromState() {
+    state.theme = normalizeThemeState(state.theme);
+    renderThemePresetOptions();
+    renderThemePaletteRows();
+    renderPaletteVarOptions();
+    rebuildThemeFontPresetOptions();
+
+    const active = getActiveThemePreset();
+    dom.themeNameInput.value = active.name;
+    dom.themeBodySizeInput.value = active.fonts.bodySize;
+    dom.themeH1SizeInput.value = active.fonts.h1Size;
+    dom.themeH2SizeInput.value = active.fonts.h2Size;
+    dom.themeH3SizeInput.value = active.fonts.h3Size;
+    dom.themeSmallSizeInput.value = active.fonts.smallSize;
+    dom.themeLineHeightInput.value = active.fonts.lineHeight;
+    setThemeFontSelectValue(dom.themeBodyFontSelect, active.fonts.bodyFamily);
+    setThemeFontSelectValue(dom.themeHeadingFontSelect, active.fonts.headingFamily);
+  }
+
+  function renderThemePresetOptions() {
+    state.theme = normalizeThemeState(state.theme);
+    dom.themePresetSelect.innerHTML = "";
+    for (const themePreset of state.theme.themes) {
+      const option = document.createElement("option");
+      option.value = themePreset.id;
+      option.textContent = themePreset.name;
+      dom.themePresetSelect.appendChild(option);
+    }
+    dom.themePresetSelect.value = state.theme.activeThemeId;
+  }
+
+  function renderThemePaletteRows() {
+    const active = getActiveThemePreset();
+    dom.themePaletteList.innerHTML = "";
+    dom.themeCustomPaletteList.innerHTML = "";
+    state.controls.themeColorRows = {};
+    state.controls.themeCustomRows = {};
+
+    for (const colorDef of THEME_COLOR_DEFS) {
+      const row = createThemeColorRow(colorDef.label, colorDef.key, active.colors[colorDef.key], false);
+      dom.themePaletteList.appendChild(row.root);
+      state.controls.themeColorRows[colorDef.key] = row;
+    }
+
+    const customEntries = Object.entries(active.customColors || {});
+    if (customEntries.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "theme-empty";
+      empty.textContent = "No custom colors";
+      dom.themeCustomPaletteList.appendChild(empty);
+      return;
+    }
+
+    for (const [key, value] of customEntries) {
+      const row = createThemeColorRow(key, key, value, true);
+      dom.themeCustomPaletteList.appendChild(row.root);
+      state.controls.themeCustomRows[key] = row;
+    }
+  }
+
+  function createThemeColorRow(labelText, colorKey, colorValue, isCustom) {
+    const root = document.createElement("div");
+    root.className = "theme-color-row";
+
+    const label = document.createElement("span");
+    label.className = "theme-color-label";
+    label.textContent = labelText;
+
+    const swatch = document.createElement("span");
+    swatch.className = "theme-swatch";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = colorValue;
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copy";
+
+    root.appendChild(label);
+    root.appendChild(swatch);
+    root.appendChild(input);
+    root.appendChild(copyBtn);
+
+    let removeBtn = null;
+    if (isCustom) {
+      removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.textContent = "Remove";
+      root.appendChild(removeBtn);
+      removeBtn.addEventListener("click", () => {
+        deleteCustomThemeColor(colorKey);
+      });
+    }
+
+    const refreshSwatch = () => {
+      const normalized = normalizeHexColor(input.value, THEME_COLOR_DEFS.find((item) => item.key === colorKey)?.fallback || "#000000");
+      swatch.style.backgroundColor = normalized;
+    };
+
+    refreshSwatch();
+    input.addEventListener("input", () => {
+      const active = getActiveThemePreset();
+      const fallback = isCustom
+        ? String(active.customColors?.[colorKey] || "#000000")
+        : String(active.colors?.[colorKey] || THEME_COLOR_DEFS.find((item) => item.key === colorKey)?.fallback || "#000000");
+      const value = normalizeHexColor(input.value, fallback);
+      input.value = value;
+      setThemeColorValue(colorKey, value, isCustom);
+      refreshSwatch();
+      renderPaletteVarOptions();
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await copyText(input.value);
+        setStatus(`Copied ${labelText} color`);
+      } catch {
+        setStatus("Copy failed", true);
+      }
+    });
+
+    return { root, swatch, input, copyBtn, removeBtn };
+  }
+
+  function renderPaletteVarOptions() {
+    const active = getActiveThemePreset();
+    const availableKeys = [
+      ...THEME_COLOR_DEFS.map((item) => item.key),
+      ...Object.keys(active.customColors || {}),
+    ];
+    const optionSet = [{ value: "", label: "(none)" }];
+    for (const key of availableKeys) {
+      optionSet.push({
+        value: key,
+        label: `${key} -> ${resolveThemeVariableName(key)}`,
+      });
+    }
+
+    applySelectOptions(dom.paletteColorSelect, optionSet);
+    applySelectOptions(dom.paletteBackgroundSelect, optionSet);
+    applySelectOptions(dom.paletteBorderSelect, optionSet);
+
+    if (!dom.paletteColorSelect.value) {
+      dom.paletteColorSelect.value = "text";
+    }
+    if (!dom.paletteBackgroundSelect.value) {
+      dom.paletteBackgroundSelect.value = "surface";
+    }
+    if (!dom.paletteBorderSelect.value) {
+      dom.paletteBorderSelect.value = "border";
+    }
+  }
+
+  function applySelectOptions(select, options) {
+    const previous = select.value;
+    select.innerHTML = "";
+    for (const item of options) {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      select.appendChild(option);
+    }
+    if (Array.from(select.options).some((item) => item.value === previous)) {
+      select.value = previous;
+    }
+  }
+
+  function rebuildThemeFontPresetOptions() {
+    fillThemeFontSelect(dom.themeBodyFontSelect, dom.themeBodyFontSelect.value);
+    fillThemeFontSelect(dom.themeHeadingFontSelect, dom.themeHeadingFontSelect.value);
+  }
+
+  function fillThemeFontSelect(select, value) {
+    const currentValue = String(value || "");
+    select.innerHTML = "";
+
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "(empty)";
+    select.appendChild(emptyOption);
+
+    for (const choice of SYSTEM_FONT_CHOICES) {
+      const option = document.createElement("option");
+      option.value = choice.value;
+      option.textContent = choice.label;
+      option.dataset.relFontFamily = choice.family;
+      option.dataset.relFontSystem = "1";
+      select.appendChild(option);
+    }
+
+    const providerLabel = FONT_PROVIDER_LABELS[state.runtimeFonts.provider] || FONT_PROVIDER_LABELS.none;
+    for (const family of ensureFontFamilies(state.runtimeFonts.families)) {
+      const option = document.createElement("option");
+      option.value = buildThemeExternalFontFamilyValue(family);
+      option.textContent = `${family} (${providerLabel})`;
+      option.dataset.relFontFamily = family;
+      option.dataset.relFontExternal = "1";
+      select.appendChild(option);
+    }
+
+    setThemeFontSelectValue(select, currentValue);
+  }
+
+  function setThemeFontSelectValue(select, value) {
+    const target = String(value || "");
+    if (!target) {
+      select.value = "";
+      return;
+    }
+
+    if (Array.from(select.options).some((option) => option.value === target)) {
+      select.value = target;
+      return;
+    }
+
+    const primary = resolvePrimaryFontFamily(target);
+    const byFamily = Array.from(select.options).find((option) => {
+      return option.dataset.relFontFamily && option.dataset.relFontFamily.toLowerCase() === primary.toLowerCase();
+    });
+    if (byFamily) {
+      select.value = byFamily.value;
+      return;
+    }
+
+    const custom = document.createElement("option");
+    custom.value = target;
+    custom.textContent = `${primary || target} (current)`;
+    custom.dataset.relFontFamily = primary || target;
+    select.appendChild(custom);
+    select.value = target;
+  }
+
+  function selectThemePreset(themeId) {
+    const wanted = String(themeId || "").trim();
+    if (!wanted) {
+      return;
+    }
+    if (!state.theme.themes.some((item) => item.id === wanted)) {
+      return;
+    }
+    state.theme.activeThemeId = wanted;
+    syncThemeUiFromState();
+    if (state.theme.applied) {
+      applyThemeToOverlay();
+    }
+  }
+
+  function createThemePresetFromUi() {
+    const name = String(dom.themeNameInput.value || "").trim() || "New Theme";
+    const source = getActiveThemePreset();
+    const preset = cloneThemePreset(source);
+    preset.id = generateId("theme");
+    preset.name = name;
+    state.theme.themes.push(preset);
+    state.theme.activeThemeId = preset.id;
+    syncThemeUiFromState();
+    setStatus(`Theme created: ${name}`);
+  }
+
+  function saveActiveThemePresetFromUi() {
+    const active = getActiveThemePreset();
+    active.name = String(dom.themeNameInput.value || "").trim() || active.name;
+    updateThemeFontsFromUi();
+    renderThemePresetOptions();
+    setStatus(`Theme saved: ${active.name}`);
+  }
+
+  function deleteActiveThemePreset() {
+    if (state.theme.themes.length <= 1) {
+      setStatus("At least one theme preset is required", true);
+      return;
+    }
+
+    const currentId = state.theme.activeThemeId;
+    state.theme.themes = state.theme.themes.filter((item) => item.id !== currentId);
+    state.theme.activeThemeId = state.theme.themes[0].id;
+    syncThemeUiFromState();
+    if (state.theme.applied) {
+      applyThemeToOverlay();
+    }
+    setStatus("Theme deleted");
+  }
+
+  function addCustomThemeColor() {
+    const nameInput = window.prompt("Custom color name (example: brand-alt)");
+    if (nameInput == null) {
+      return;
+    }
+
+    const key = sanitizeCustomColorName(nameInput);
+    if (!key) {
+      setStatus("Invalid custom color name", true);
+      return;
+    }
+
+    const active = getActiveThemePreset();
+    if (!active.customColors) {
+      active.customColors = {};
+    }
+    if (!active.customColors[key]) {
+      active.customColors[key] = "#000000";
+    }
+
+    renderThemePaletteRows();
+    renderPaletteVarOptions();
+  }
+
+  function deleteCustomThemeColor(key) {
+    const active = getActiveThemePreset();
+    if (!active.customColors || !Object.prototype.hasOwnProperty.call(active.customColors, key)) {
+      return;
+    }
+    delete active.customColors[key];
+    renderThemePaletteRows();
+    renderPaletteVarOptions();
+  }
+
+  function setThemeColorValue(key, value, isCustom) {
+    const active = getActiveThemePreset();
+    if (isCustom) {
+      if (!active.customColors) {
+        active.customColors = {};
+      }
+      active.customColors[key] = normalizeHexColor(value, "#000000");
+      return;
+    }
+    active.colors[key] = normalizeHexColor(value, THEME_COLOR_DEFS.find((item) => item.key === key)?.fallback || "#000000");
+  }
+
+  async function applyPaletteToSelectedElement() {
+    if (!state.selectedRelId) {
+      setStatus("Select an element first", true);
+      return;
+    }
+
+    state.theme.applied = true;
+    applyThemeToOverlay();
+
+    const mapping = [
+      { property: "color", key: dom.paletteColorSelect.value },
+      { property: "background-color", key: dom.paletteBackgroundSelect.value },
+      { property: "border-color", key: dom.paletteBorderSelect.value },
+    ];
+
+    for (const item of mapping) {
+      if (!item.key) {
+        continue;
+      }
+      applyStyle(item.property, `var(${resolveThemeVariableName(item.key)})`);
+    }
+
+    setStatus("Palette applied to selected element");
+  }
+
+  function updateThemeFontsFromUi() {
+    const active = getActiveThemePreset();
+    active.fonts = normalizeThemeFonts({
+      bodyFamily: dom.themeBodyFontSelect.value || active.fonts.bodyFamily,
+      headingFamily: dom.themeHeadingFontSelect.value || active.fonts.headingFamily,
+      bodySize: dom.themeBodySizeInput.value || active.fonts.bodySize,
+      h1Size: dom.themeH1SizeInput.value || active.fonts.h1Size,
+      h2Size: dom.themeH2SizeInput.value || active.fonts.h2Size,
+      h3Size: dom.themeH3SizeInput.value || active.fonts.h3Size,
+      smallSize: dom.themeSmallSizeInput.value || active.fonts.smallSize,
+      lineHeight: dom.themeLineHeightInput.value || active.fonts.lineHeight,
+    });
+  }
+
+  function loadThemeFonts() {
+    updateThemeFontsFromUi();
+    const active = getActiveThemePreset();
+    const families = new Set(ensureFontFamilies(state.runtimeFonts.families));
+    const neededFamilies = [
+      resolvePrimaryFontFamily(active.fonts.bodyFamily),
+      resolvePrimaryFontFamily(active.fonts.headingFamily),
+    ];
+
+    let changed = false;
+    for (const family of neededFamilies) {
+      if (!family || KNOWN_SYSTEM_FAMILIES.has(family.toLowerCase())) {
+        continue;
+      }
+      if (!families.has(family)) {
+        families.add(family);
+        changed = true;
+      }
+    }
+
+    if (!changed && state.runtimeFonts.provider !== "none") {
+      setStatus("Theme fonts already loaded");
+      return;
+    }
+    if (!changed && state.runtimeFonts.provider === "none") {
+      setStatus("No external fonts to load");
+      return;
+    }
+
+    const provider = state.runtimeFonts.provider !== "none" ? state.runtimeFonts.provider : "google";
+    state.runtimeFonts = normalizeRuntimeFonts({
+      provider,
+      families: Array.from(families),
+    });
+    syncFontControlsFromState();
+    sendRuntimeFontsToOverlay();
+    setStatus("Theme fonts loaded");
+  }
+
+  function applyThemeFontsGlobally() {
+    loadThemeFonts();
+    applyThemeToPage();
+  }
+
+  function applyThemeToPage() {
+    updateThemeFontsFromUi();
+    state.theme.applied = true;
+    applyThemeToOverlay();
+    setStatus("Theme applied to page");
+  }
+
+  function applyThemeToOverlay() {
+    if (!state.overlayReady) {
+      return;
+    }
+    sendToOverlay({
+      type: "REL_SET_THEME",
+      payload: {
+        cssText: buildThemeCss(state.theme),
+      },
+    });
+  }
+
+  function buildThemeCss(themeState) {
+    const normalized = normalizeThemeState(themeState);
+    if (!normalized.applied) {
+      return "";
+    }
+    const active = normalized.themes.find((item) => item.id === normalized.activeThemeId) || normalized.themes[0];
+    if (!active) {
+      return "";
+    }
+
+    const lines = [];
+    lines.push(":root {");
+    for (const def of THEME_COLOR_DEFS) {
+      lines.push(`  ${def.varName}: ${active.colors[def.key]};`);
+    }
+    for (const [key, value] of Object.entries(active.customColors || {})) {
+      lines.push(`  ${resolveThemeVariableName(key)}: ${value};`);
+    }
+    lines.push(`  --rel-font-body: ${active.fonts.bodyFamily};`);
+    lines.push(`  --rel-font-heading: ${active.fonts.headingFamily};`);
+    lines.push(`  --rel-font-size-body: ${active.fonts.bodySize};`);
+    lines.push(`  --rel-font-size-h1: ${active.fonts.h1Size};`);
+    lines.push(`  --rel-font-size-h2: ${active.fonts.h2Size};`);
+    lines.push(`  --rel-font-size-h3: ${active.fonts.h3Size};`);
+    lines.push(`  --rel-font-size-small: ${active.fonts.smallSize};`);
+    lines.push(`  --rel-font-line-height: ${active.fonts.lineHeight};`);
+    lines.push("}");
+    lines.push("");
+    lines.push("body {");
+    lines.push("  font-family: var(--rel-font-body);");
+    lines.push("  font-size: var(--rel-font-size-body);");
+    lines.push("  line-height: var(--rel-font-line-height);");
+    lines.push("  color: var(--rel-text);");
+    lines.push("  background-color: var(--rel-bg);");
+    lines.push("}");
+    lines.push("");
+    lines.push("h1, h2, h3 {");
+    lines.push("  font-family: var(--rel-font-heading);");
+    lines.push("  line-height: var(--rel-font-line-height);");
+    lines.push("}");
+    lines.push("");
+    lines.push("h1 { font-size: var(--rel-font-size-h1); }");
+    lines.push("h2 { font-size: var(--rel-font-size-h2); }");
+    lines.push("h3 { font-size: var(--rel-font-size-h3); }");
+    lines.push("small { font-size: var(--rel-font-size-small); }");
+
+    return lines.join("\n");
+  }
+
+  function resolveThemeVariableName(key) {
+    const mapped = THEME_COLOR_VAR_BY_KEY[key];
+    if (mapped) {
+      return mapped;
+    }
+    return `--rel-${sanitizeCustomColorName(key)}`;
+  }
+
+  async function copyText(value) {
+    const text = String(value || "");
+    if (!text) {
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const temp = document.createElement("textarea");
+    temp.value = text;
+    document.body.appendChild(temp);
+    temp.select();
+    document.execCommand("copy");
+    temp.remove();
+  }
+
+  function sanitizeCustomColorName(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\-_]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+  }
+
   function buildStyleControls() {
     dom.controlsContainer.innerHTML = "";
     state.controls.styleInputs = {};
@@ -453,6 +1107,20 @@
     state.controls.backgroundSolidInput = null;
     state.controls.backgroundGradientInput = null;
     state.controls.backgroundPreview = null;
+    state.controls.shadowRoot = null;
+    state.controls.shadowEnabledInput = null;
+    state.controls.shadowTargetInput = null;
+    state.controls.shadowTextTargetOption = null;
+    state.controls.shadowPresetInput = null;
+    state.controls.shadowRawInput = null;
+    state.controls.shadowOffsetXInput = null;
+    state.controls.shadowOffsetYInput = null;
+    state.controls.shadowBlurInput = null;
+    state.controls.shadowSpreadInput = null;
+    state.controls.shadowColorInput = null;
+    state.controls.shadowInsetInput = null;
+    state.controls.shadowModeUpdating = false;
+    state.controls.shadowValueUpdating = false;
 
     for (const section of styleSectionsSchema) {
       const sectionRoot = document.createElement("section");
@@ -470,6 +1138,10 @@
         }
         if (control.type === "font-family") {
           buildFontFamilyControl(sectionRoot, control);
+          continue;
+        }
+        if (control.type === "shadow") {
+          buildShadowControl(sectionRoot);
           continue;
         }
         buildSimpleStyleControl(sectionRoot, control);
@@ -665,6 +1337,9 @@
       return;
     }
     state.controls.backgroundType = nextType;
+    if (state.selectedRelId) {
+      state.controls.backgroundModeByRelId[state.selectedRelId] = nextType;
+    }
     updateBackgroundControlVisibility();
     updateBackgroundPreview();
   }
@@ -724,6 +1399,410 @@
     if (colorValue) {
       preview.style.backgroundColor = colorValue;
     }
+  }
+
+  function buildShadowControl(container) {
+    const root = document.createElement("div");
+    root.className = "shadow-controls";
+
+    const enableRow = document.createElement("label");
+    enableRow.className = "check-row";
+    const enableInput = document.createElement("input");
+    enableInput.type = "checkbox";
+    const enableText = document.createElement("span");
+    enableText.textContent = "Enable shadow";
+    enableRow.appendChild(enableInput);
+    enableRow.appendChild(enableText);
+    root.appendChild(enableRow);
+
+    const targetRow = document.createElement("label");
+    targetRow.className = "control-item";
+    const targetLabel = document.createElement("span");
+    targetLabel.textContent = "Target";
+    const targetSelect = document.createElement("select");
+    const boxOption = document.createElement("option");
+    boxOption.value = "box";
+    boxOption.textContent = "Box shadow";
+    const textOption = document.createElement("option");
+    textOption.value = "text";
+    textOption.textContent = "Text shadow";
+    targetSelect.appendChild(boxOption);
+    targetSelect.appendChild(textOption);
+    targetRow.appendChild(targetLabel);
+    targetRow.appendChild(targetSelect);
+    root.appendChild(targetRow);
+
+    const presetRow = document.createElement("label");
+    presetRow.className = "control-item";
+    const presetLabel = document.createElement("span");
+    presetLabel.textContent = "Preset";
+    const presetSelect = document.createElement("select");
+    const presetOptions = [
+      { value: "none", label: "None" },
+      { value: "soft", label: "Soft" },
+      { value: "medium", label: "Medium" },
+      { value: "strong", label: "Strong" },
+      { value: "inner", label: "Inner" },
+      { value: "custom", label: "Custom" },
+    ];
+    for (const item of presetOptions) {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      presetSelect.appendChild(option);
+    }
+    presetRow.appendChild(presetLabel);
+    presetRow.appendChild(presetSelect);
+    root.appendChild(presetRow);
+
+    const rawRow = document.createElement("label");
+    rawRow.className = "control-item";
+    const rawLabel = document.createElement("span");
+    rawLabel.textContent = "Shadow String";
+    const rawInput = document.createElement("input");
+    rawInput.type = "text";
+    rawInput.placeholder = "0px 6px 18px 0px rgba(0,0,0,0.2)";
+    rawRow.appendChild(rawLabel);
+    rawRow.appendChild(rawInput);
+    root.appendChild(rawRow);
+
+    const advancedGrid = document.createElement("div");
+    advancedGrid.className = "shadow-advanced-grid";
+    const advancedControls = [
+      { key: "offsetX", label: "offset-x", placeholder: "0px" },
+      { key: "offsetY", label: "offset-y", placeholder: "6px" },
+      { key: "blur", label: "blur", placeholder: "18px" },
+      { key: "spread", label: "spread", placeholder: "0px" },
+      { key: "color", label: "color", placeholder: "rgba(0, 0, 0, 0.2)" },
+    ];
+    const advancedInputs = {};
+    for (const item of advancedControls) {
+      const row = document.createElement("label");
+      row.className = "control-item";
+      const label = document.createElement("span");
+      label.textContent = item.label;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = item.placeholder;
+      row.appendChild(label);
+      row.appendChild(input);
+      advancedGrid.appendChild(row);
+      advancedInputs[item.key] = input;
+    }
+    root.appendChild(advancedGrid);
+
+    const insetRow = document.createElement("label");
+    insetRow.className = "check-row";
+    const insetInput = document.createElement("input");
+    insetInput.type = "checkbox";
+    const insetText = document.createElement("span");
+    insetText.textContent = "Inset";
+    insetRow.appendChild(insetInput);
+    insetRow.appendChild(insetText);
+    root.appendChild(insetRow);
+
+    enableInput.addEventListener("change", () => {
+      if (state.controls.shadowModeUpdating) {
+        return;
+      }
+      updateShadowControlsDisabledState();
+      applyShadowFromControls();
+    });
+
+    targetSelect.addEventListener("change", () => {
+      if (state.controls.shadowModeUpdating) {
+        return;
+      }
+      updateShadowControlsDisabledState();
+      applyShadowFromControls();
+    });
+
+    presetSelect.addEventListener("change", () => {
+      if (state.controls.shadowModeUpdating) {
+        return;
+      }
+      applyShadowPresetFromSelect();
+    });
+
+    rawInput.addEventListener("input", () => {
+      if (state.controls.shadowModeUpdating) {
+        return;
+      }
+      const parsed = parseShadowValue(rawInput.value, targetSelect.value);
+      state.controls.shadowValueUpdating = true;
+      hydrateShadowAdvancedInputs(parsed, targetSelect.value);
+      state.controls.shadowValueUpdating = false;
+      presetSelect.value = detectShadowPreset(rawInput.value, targetSelect.value);
+      applyShadowFromControls();
+    });
+
+    for (const input of Object.values(advancedInputs)) {
+      input.addEventListener("input", () => {
+        if (state.controls.shadowModeUpdating) {
+          return;
+        }
+        if (state.controls.shadowValueUpdating) {
+          return;
+        }
+        updateShadowRawFromAdvanced();
+      });
+    }
+
+    insetInput.addEventListener("change", () => {
+      if (state.controls.shadowModeUpdating) {
+        return;
+      }
+      if (state.controls.shadowValueUpdating) {
+        return;
+      }
+      updateShadowRawFromAdvanced();
+    });
+
+    container.appendChild(root);
+
+    state.controls.shadowRoot = root;
+    state.controls.shadowEnabledInput = enableInput;
+    state.controls.shadowTargetInput = targetSelect;
+    state.controls.shadowTextTargetOption = textOption;
+    state.controls.shadowPresetInput = presetSelect;
+    state.controls.shadowRawInput = rawInput;
+    state.controls.shadowOffsetXInput = advancedInputs.offsetX;
+    state.controls.shadowOffsetYInput = advancedInputs.offsetY;
+    state.controls.shadowBlurInput = advancedInputs.blur;
+    state.controls.shadowSpreadInput = advancedInputs.spread;
+    state.controls.shadowColorInput = advancedInputs.color;
+    state.controls.shadowInsetInput = insetInput;
+    updateShadowControlsDisabledState();
+  }
+
+  function applyShadowPresetFromSelect() {
+    const preset = state.controls.shadowPresetInput?.value || "none";
+    if (preset === "custom") {
+      return;
+    }
+    const target = state.controls.shadowTargetInput?.value === "text" ? "text" : "box";
+    const value = preset === "none" ? "none" : SHADOW_PRESETS[preset] || "none";
+    state.controls.shadowModeUpdating = true;
+    state.controls.shadowRawInput.value = value === "none" ? "" : value;
+    hydrateShadowAdvancedInputs(parseShadowValue(value, target), target);
+    state.controls.shadowModeUpdating = false;
+    applyShadowFromControls();
+  }
+
+  function updateShadowRawFromAdvanced() {
+    const target = state.controls.shadowTargetInput?.value === "text" ? "text" : "box";
+    const value = composeShadowFromAdvanced(target);
+    state.controls.shadowModeUpdating = true;
+    state.controls.shadowRawInput.value = value === "none" ? "" : value;
+    state.controls.shadowPresetInput.value = detectShadowPreset(value, target);
+    state.controls.shadowModeUpdating = false;
+    applyShadowFromControls();
+  }
+
+  function composeShadowFromAdvanced(target) {
+    const x = String(state.controls.shadowOffsetXInput?.value || "0px").trim() || "0px";
+    const y = String(state.controls.shadowOffsetYInput?.value || "0px").trim() || "0px";
+    const blur = String(state.controls.shadowBlurInput?.value || "0px").trim() || "0px";
+    const spread = String(state.controls.shadowSpreadInput?.value || "0px").trim() || "0px";
+    const color = String(state.controls.shadowColorInput?.value || "rgba(0, 0, 0, 0.2)").trim() || "rgba(0, 0, 0, 0.2)";
+    const inset = Boolean(state.controls.shadowInsetInput?.checked);
+    if (target === "text") {
+      return `${x} ${y} ${blur} ${color}`;
+    }
+    return `${inset ? "inset " : ""}${x} ${y} ${blur} ${spread} ${color}`.trim();
+  }
+
+  function applyShadowFromControls() {
+    if (!state.selectedRelId) {
+      return;
+    }
+
+    const target = state.controls.shadowTargetInput?.value === "text" ? "text" : "box";
+    const enabled = Boolean(state.controls.shadowEnabledInput?.checked);
+    const rawValue = String(state.controls.shadowRawInput?.value || "").trim();
+    const value = enabled ? (rawValue || composeShadowFromAdvanced(target)) : "none";
+
+    if (target === "text") {
+      applyStyle("box-shadow", "");
+      applyStyle("text-shadow", value);
+      return;
+    }
+    applyStyle("text-shadow", "");
+    applyStyle("box-shadow", value);
+  }
+
+  function updateShadowControlValues(computed, overrides, selection, options) {
+    if (!state.controls.shadowRoot) {
+      return;
+    }
+
+    const selectionChanged = Boolean(options && options.selectionChanged);
+    const isTextLike = isTextLikeSelection(selection);
+
+    const overrideBox = String(overrides["box-shadow"] ?? "").trim();
+    const overrideText = String(overrides["text-shadow"] ?? "").trim();
+    const computedBox = String(computed["box-shadow"] ?? "").trim();
+    const computedText = String(computed["text-shadow"] ?? "").trim();
+
+    const effectiveBox = overrideBox || computedBox || "none";
+    const effectiveText = overrideText || computedText || "none";
+
+    let target = state.controls.shadowTargetInput?.value === "text" ? "text" : "box";
+    if (selectionChanged) {
+      if (isShadowEnabled(effectiveText) && !isShadowEnabled(effectiveBox)) {
+        target = "text";
+      } else {
+        target = "box";
+      }
+    }
+    if (!isTextLike && target === "text") {
+      target = "box";
+    }
+
+    const effectiveValue = target === "text" ? effectiveText : effectiveBox;
+    const enabled = isShadowEnabled(effectiveValue);
+    const parsed = parseShadowValue(effectiveValue, target);
+
+    state.controls.shadowModeUpdating = true;
+    state.controls.shadowTextTargetOption.hidden = !isTextLike;
+    state.controls.shadowTargetInput.value = target;
+    state.controls.shadowEnabledInput.checked = enabled;
+    state.controls.shadowRawInput.value = enabled && effectiveValue !== "none" ? effectiveValue : "";
+    hydrateShadowAdvancedInputs(parsed, target);
+    state.controls.shadowPresetInput.value = detectShadowPreset(effectiveValue, target);
+    updateShadowControlsDisabledState();
+    state.controls.shadowModeUpdating = false;
+  }
+
+  function hydrateShadowAdvancedInputs(parsed, target) {
+    const value = parsed || parseShadowValue("", target);
+    state.controls.shadowOffsetXInput.value = value.offsetX;
+    state.controls.shadowOffsetYInput.value = value.offsetY;
+    state.controls.shadowBlurInput.value = value.blur;
+    state.controls.shadowSpreadInput.value = target === "box" ? value.spread : "";
+    state.controls.shadowColorInput.value = value.color;
+    state.controls.shadowInsetInput.checked = target === "box" ? Boolean(value.inset) : false;
+  }
+
+  function updateShadowControlsDisabledState() {
+    const enabled = Boolean(state.controls.shadowEnabledInput?.checked);
+    const target = state.controls.shadowTargetInput?.value === "text" ? "text" : "box";
+    const disableAll = !enabled;
+    const disableSpread = disableAll || target === "text";
+    const disableInset = disableAll || target === "text";
+
+    for (const input of [
+      state.controls.shadowTargetInput,
+      state.controls.shadowPresetInput,
+      state.controls.shadowRawInput,
+      state.controls.shadowOffsetXInput,
+      state.controls.shadowOffsetYInput,
+      state.controls.shadowBlurInput,
+      state.controls.shadowColorInput,
+    ]) {
+      if (input) {
+        input.disabled = disableAll;
+      }
+    }
+    if (state.controls.shadowSpreadInput) {
+      state.controls.shadowSpreadInput.disabled = disableSpread;
+    }
+    if (state.controls.shadowInsetInput) {
+      state.controls.shadowInsetInput.disabled = disableInset;
+    }
+  }
+
+  function isShadowEnabled(value) {
+    const normalized = normalizeShadowString(value);
+    return normalized && normalized !== "none";
+  }
+
+  function detectShadowPreset(value, target) {
+    if (!isShadowEnabled(value)) {
+      return "none";
+    }
+    const normalized = normalizeShadowString(value);
+    for (const [preset, presetValue] of Object.entries(SHADOW_PRESETS)) {
+      if (preset === "none") {
+        continue;
+      }
+      if (target === "text" && preset === "inner") {
+        continue;
+      }
+      if (normalizeShadowString(presetValue) === normalized) {
+        return preset;
+      }
+    }
+    return "custom";
+  }
+
+  function normalizeShadowString(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+  }
+
+  function parseShadowValue(input, target) {
+    const raw = String(input || "").trim();
+    const fallback = {
+      parsed: false,
+      inset: false,
+      offsetX: "0px",
+      offsetY: "0px",
+      blur: "0px",
+      spread: "0px",
+      color: "rgba(0, 0, 0, 0.2)",
+    };
+    if (!raw || normalizeShadowString(raw) === "none") {
+      return { ...fallback, parsed: true };
+    }
+
+    let text = raw;
+    let inset = false;
+    if (target === "box" && /^inset\b/i.test(text)) {
+      inset = true;
+      text = text.replace(/^inset\s+/i, "");
+    }
+
+    const colorMatch = text.match(/(rgba?\([^)]+\)|hsla?\([^)]+\)|#[0-9a-fA-F]{3,8})$/);
+    const color = colorMatch ? colorMatch[1] : fallback.color;
+    const geometry = colorMatch ? text.slice(0, colorMatch.index).trim() : text;
+    const tokens = geometry.split(/\s+/).filter(Boolean);
+
+    if (target === "text") {
+      if (tokens.length < 3) {
+        return { ...fallback, color, inset: false };
+      }
+      return {
+        parsed: true,
+        inset: false,
+        offsetX: tokens[0],
+        offsetY: tokens[1],
+        blur: tokens[2],
+        spread: "0px",
+        color,
+      };
+    }
+
+    if (tokens.length < 3) {
+      return { ...fallback, color, inset };
+    }
+
+    return {
+      parsed: true,
+      inset,
+      offsetX: tokens[0],
+      offsetY: tokens[1],
+      blur: tokens[2],
+      spread: tokens[3] || "0px",
+      color,
+    };
+  }
+
+  function isTextLikeSelection(selection) {
+    const tag = String(selection?.tagName || "").toLowerCase();
+    return ["p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "a", "small", "strong", "em", "label", "li"].includes(tag);
   }
 
   function rebuildFontFamilyOptions(currentValue) {
@@ -903,6 +1982,8 @@
     state.runtimeLibraries = { ...state.defaultsLibraries };
     state.defaultsFonts = normalizeRuntimeFonts(data.defaults_fonts || {});
     state.runtimeFonts = { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
+    state.defaultsTheme = createDefaultThemeState();
+    state.theme = createDefaultThemeState();
     dom.projectRootInput.value = data.project_root;
     dom.indexPathInput.value = data.index_path;
     setStatus(`Loaded project: ${data.project_root}`);
@@ -932,6 +2013,8 @@
     state.runtimeLibraries = { ...state.defaultsLibraries };
     state.defaultsFonts = normalizeRuntimeFonts(data.defaults_fonts || {});
     state.runtimeFonts = { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
+    state.defaultsTheme = createDefaultThemeState();
+    state.theme = createDefaultThemeState();
     state.selectedRelId = null;
     state.elementsMap = {};
     state.overridesMeta = {};
@@ -942,10 +2025,12 @@
     state.lastSelection = null;
     state.lastTreeSnapshot = [];
     state.overlayReady = false;
+    state.controls.backgroundModeByRelId = {};
 
     await loadPatchInfo();
     syncLibraryControlsFromState();
     syncFontControlsFromState();
+    syncThemeUiFromState();
     buildAddPanel();
     clearSelectionUi();
     loadIframe();
@@ -977,6 +2062,8 @@
     state.deletedNodes = normalizedPatch.deletedNodes;
     state.runtimeLibraries = normalizedPatch.runtimeLibraries || { ...state.defaultsLibraries };
     state.runtimeFonts = normalizedPatch.runtimeFonts || { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
+    state.theme = normalizedPatch.theme || createDefaultThemeState();
+    state.controls.backgroundModeByRelId = {};
 
     if (hasPatchContent()) {
       setStatus("Patch loaded");
@@ -996,9 +2083,10 @@
       deletedNodes: state.deletedNodes,
       runtimeLibraries: state.runtimeLibraries,
       runtimeFonts: state.runtimeFonts,
+      theme: state.theme,
     };
 
-    const overrideCss = buildOverrideCss(state.overridesMeta);
+    const overrideCss = buildOverrideCss(state.overridesMeta, state.theme);
     const response = await fetch("/api/patch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1132,12 +2220,19 @@
       syncFontControlsFromState();
       return;
     }
+
+    if (msg.type === "REL_THEME_APPLIED") {
+      return;
+    }
   }
 
   function handleSelection(payload) {
     if (!payload || !payload.relId) {
       return;
     }
+
+    const previousRelId = state.selectedRelId;
+    const selectionChanged = previousRelId !== payload.relId;
 
     state.selectedRelId = payload.relId;
     state.lastSelection = payload;
@@ -1148,7 +2243,11 @@
     const links = state.linksMeta[payload.relId] || {};
 
     updateSelectionInfo(payload, overrides, attrs, links);
-    updateStyleControlValues(payload.computed || {}, overrides);
+    updateStyleControlValues(payload.computed || {}, overrides, {
+      selectionChanged,
+      relId: payload.relId,
+      selection: payload,
+    });
     updateAttributesPanel(payload, attrs);
     updateLinkPanel(payload, links);
     updateImagePanel(payload, attrs, overrides);
@@ -1196,6 +2295,16 @@
     setBackgroundType("solid", true);
     updateFontLoadingWarning("");
     updateBackgroundPreview();
+    if (state.controls.shadowEnabledInput) {
+      state.controls.shadowModeUpdating = true;
+      state.controls.shadowEnabledInput.checked = false;
+      state.controls.shadowTargetInput.value = "box";
+      state.controls.shadowPresetInput.value = "none";
+      state.controls.shadowRawInput.value = "";
+      hydrateShadowAdvancedInputs(parseShadowValue("", "box"), "box");
+      updateShadowControlsDisabledState();
+      state.controls.shadowModeUpdating = false;
+    }
 
     markActiveTreeNode("");
   }
@@ -1227,7 +2336,7 @@
     dom.selectionInfo.textContent = lines.join("\n");
   }
 
-  function updateStyleControlValues(computed, overrides) {
+  function updateStyleControlValues(computed, overrides, options) {
     for (const property of Object.keys(state.controls.styleInputs || {})) {
       const input = state.controls.styleInputs[property];
       if (!input) {
@@ -1244,26 +2353,43 @@
     const computedBackgroundImage = String(computed["background-image"] ?? "").trim();
     const overrideBackgroundColor = String(overrides["background-color"] ?? "").trim();
     const computedBackgroundColor = String(computed["background-color"] ?? "").trim();
-    const hasGradient = isGradientValue(overrideBackground) || (!overrideBackground && isGradientValue(computedBackgroundImage));
+    const relId = String(options?.relId || state.selectedRelId || "");
+    const selectionChanged = Boolean(options?.selectionChanged);
+    const detectedMode = detectBackgroundMode(overrides, computed);
+    const rememberedMode = relId ? state.controls.backgroundModeByRelId[relId] : "";
+    const nextMode = selectionChanged
+      ? detectedMode
+      : (rememberedMode || state.controls.backgroundType || detectedMode);
 
-    if (hasGradient) {
-      const gradientValue = overrideBackground || computedBackground || computedBackgroundImage;
-      if (state.controls.backgroundGradientInput) {
+    if (selectionChanged) {
+      setBackgroundType(nextMode, true);
+    } else if (!state.controls.backgroundType) {
+      setBackgroundType(nextMode, true);
+    }
+
+    if (relId && selectionChanged) {
+      state.controls.backgroundModeByRelId[relId] = nextMode;
+    }
+
+    const gradientValue = overrideBackground || computedBackground || (isGradientValue(computedBackgroundImage) ? computedBackgroundImage : "");
+    const colorValue = overrideBackgroundColor || computedBackgroundColor;
+    if (state.controls.backgroundGradientInput) {
+      if (nextMode === "gradient") {
         state.controls.backgroundGradientInput.value = gradientValue;
-      }
-      setBackgroundType("gradient", true);
-    } else {
-      const colorValue = overrideBackgroundColor || computedBackgroundColor;
-      if (state.controls.backgroundSolidInput) {
-        state.controls.backgroundSolidInput.value = toHexColor(colorValue, "#ffffff");
-      }
-      if (state.controls.backgroundGradientInput) {
+      } else if (selectionChanged) {
         state.controls.backgroundGradientInput.value = "";
       }
-      setBackgroundType("solid", true);
+    }
+    if (state.controls.backgroundSolidInput) {
+      if (nextMode === "solid") {
+        state.controls.backgroundSolidInput.value = toHexColor(colorValue, "#ffffff");
+      } else if (selectionChanged && colorValue) {
+        state.controls.backgroundSolidInput.value = toHexColor(colorValue, "#ffffff");
+      }
     }
 
     updateBackgroundPreview();
+    updateShadowControlValues(computed, overrides, options?.selection || state.lastSelection || {}, options || {});
   }
 
   function updateAttributesPanel(selection, attrs) {
@@ -1543,6 +2669,7 @@
         deletedNodes: state.deletedNodes,
         runtimeLibraries: state.runtimeLibraries,
         runtimeFonts: state.runtimeFonts,
+        themeCss: buildThemeCss(state.theme),
       },
     });
 
@@ -1609,6 +2736,10 @@
 
     renderToolbarFontFamilies(fonts);
     rebuildFontFamilyOptions(state.controls.fontFamilySelect ? state.controls.fontFamilySelect.value : "");
+    rebuildThemeFontPresetOptions();
+    const activeTheme = getActiveThemePreset();
+    setThemeFontSelectValue(dom.themeBodyFontSelect, activeTheme.fonts.bodyFamily);
+    setThemeFontSelectValue(dom.themeHeadingFontSelect, activeTheme.fonts.headingFamily);
   }
 
   function updateRuntimeFontsFromControls() {
@@ -1627,12 +2758,7 @@
       setStatus("Runtime fonts updated");
     }
 
-    sendToOverlay({
-      type: "REL_SET_FONTS",
-      payload: {
-        runtimeFonts: state.runtimeFonts,
-      },
-    });
+    sendRuntimeFontsToOverlay();
   }
 
   function addFontFamilyFromToolbar() {
@@ -1663,12 +2789,7 @@
 
     dom.fontLibraryFamilyInput.value = "";
     syncFontControlsFromState();
-    sendToOverlay({
-      type: "REL_SET_FONTS",
-      payload: {
-        runtimeFonts: state.runtimeFonts,
-      },
-    });
+    sendRuntimeFontsToOverlay();
   }
 
   function renderToolbarFontFamilies(fonts) {
@@ -1712,12 +2833,7 @@
     });
 
     syncFontControlsFromState();
-    sendToOverlay({
-      type: "REL_SET_FONTS",
-      payload: {
-        runtimeFonts: state.runtimeFonts,
-      },
-    });
+    sendRuntimeFontsToOverlay();
 
     const targetValue = buildExternalFontFamilyValue(pendingFamily);
     rebuildFontFamilyOptions(targetValue);
@@ -1728,6 +2844,15 @@
       applyStyle("font-family", targetValue);
     }
     setStatus(`Loaded font: ${pendingFamily}`);
+  }
+
+  function sendRuntimeFontsToOverlay() {
+    sendToOverlay({
+      type: "REL_SET_FONTS",
+      payload: {
+        runtimeFonts: state.runtimeFonts,
+      },
+    });
   }
 
   function getFontFamilyPlaceholder(provider) {
@@ -1743,8 +2868,13 @@
     return "Font family";
   }
 
-  function buildOverrideCss(overridesMeta) {
+  function buildOverrideCss(overridesMeta, themeState) {
     const lines = [];
+    const themeCss = String(buildThemeCss(themeState || createDefaultThemeState()) || "").trim();
+    if (themeCss) {
+      lines.push(themeCss);
+      lines.push("");
+    }
     const relIds = Object.keys(overridesMeta).sort();
 
     for (const relId of relIds) {
@@ -1817,6 +2947,10 @@
       patch.runtimeFonts ||
       patch.runtime_fonts ||
       null;
+    const theme =
+      patch.theme ||
+      patch.Theme ||
+      null;
 
     return {
       version: Number(patch.version || 1),
@@ -1828,6 +2962,7 @@
       deletedNodes: ensureArray(patch.deletedNodes || patch.deleted_nodes),
       runtimeLibraries: runtimeLibraries ? normalizeRuntimeLibraries(runtimeLibraries) : null,
       runtimeFonts: runtimeFonts ? normalizeRuntimeFonts(runtimeFonts) : null,
+      theme: theme ? normalizeThemeState(theme) : null,
     };
   }
 
@@ -1850,6 +2985,157 @@
       provider,
       families: provider === "none" ? [] : ensureFontFamilies(raw.families),
     };
+  }
+
+  function createDefaultThemeState() {
+    const preset = createDefaultThemePreset();
+    return {
+      applied: false,
+      activeThemeId: preset.id,
+      themes: [preset],
+    };
+  }
+
+  function createDefaultThemePreset() {
+    const colors = {};
+    for (const def of THEME_COLOR_DEFS) {
+      colors[def.key] = def.fallback;
+    }
+    return {
+      id: "theme-default",
+      name: "Default Theme",
+      colors,
+      customColors: {},
+      fonts: { ...DEFAULT_THEME_FONTS },
+    };
+  }
+
+  function cloneThemePreset(preset) {
+    const normalized = normalizeThemePreset(preset, createDefaultThemePreset().id);
+    return {
+      id: normalized.id,
+      name: normalized.name,
+      colors: { ...normalized.colors },
+      customColors: { ...normalized.customColors },
+      fonts: { ...normalized.fonts },
+    };
+  }
+
+  function normalizeThemeState(value) {
+    const raw = value && typeof value === "object" ? value : {};
+    const rawThemes = Array.isArray(raw.themes) ? raw.themes : [];
+    const themes = rawThemes
+      .map((item, index) => normalizeThemePreset(item, `theme-${index + 1}`))
+      .filter((item) => item.id);
+
+    if (themes.length === 0) {
+      const preset = createDefaultThemePreset();
+      return {
+        applied: Boolean(raw.applied),
+        activeThemeId: preset.id,
+        themes: [preset],
+      };
+    }
+
+    const activeThemeId = String(raw.activeThemeId || "").trim();
+    const active = themes.find((item) => item.id === activeThemeId) ? activeThemeId : themes[0].id;
+
+    return {
+      applied: Boolean(raw.applied),
+      activeThemeId: active,
+      themes,
+    };
+  }
+
+  function normalizeThemePreset(value, fallbackId) {
+    const raw = value && typeof value === "object" ? value : {};
+    const id = String(raw.id || fallbackId || "").trim() || generateId("theme");
+    const name = String(raw.name || "Theme").trim() || "Theme";
+    return {
+      id,
+      name,
+      colors: normalizeThemeColors(raw.colors),
+      customColors: normalizeCustomThemeColors(raw.customColors || raw.custom_colors),
+      fonts: normalizeThemeFonts(raw.fonts),
+    };
+  }
+
+  function normalizeThemeColors(value) {
+    const raw = value && typeof value === "object" ? value : {};
+    const colors = {};
+    for (const def of THEME_COLOR_DEFS) {
+      colors[def.key] = normalizeHexColor(raw[def.key], def.fallback);
+    }
+    return colors;
+  }
+
+  function normalizeCustomThemeColors(value) {
+    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const result = {};
+    for (const key of Object.keys(raw)) {
+      const safeKey = sanitizeCustomColorName(key);
+      if (!safeKey) {
+        continue;
+      }
+      result[safeKey] = normalizeHexColor(raw[key], "#000000");
+    }
+    return result;
+  }
+
+  function normalizeThemeFonts(value) {
+    const raw = value && typeof value === "object" ? value : {};
+    return {
+      bodyFamily: normalizeFontFamilyValue(raw.bodyFamily, DEFAULT_THEME_FONTS.bodyFamily),
+      headingFamily: normalizeFontFamilyValue(raw.headingFamily, DEFAULT_THEME_FONTS.headingFamily),
+      bodySize: normalizeCssLength(raw.bodySize, DEFAULT_THEME_FONTS.bodySize),
+      h1Size: normalizeCssLength(raw.h1Size, DEFAULT_THEME_FONTS.h1Size),
+      h2Size: normalizeCssLength(raw.h2Size, DEFAULT_THEME_FONTS.h2Size),
+      h3Size: normalizeCssLength(raw.h3Size, DEFAULT_THEME_FONTS.h3Size),
+      smallSize: normalizeCssLength(raw.smallSize, DEFAULT_THEME_FONTS.smallSize),
+      lineHeight: normalizeLineHeight(raw.lineHeight, DEFAULT_THEME_FONTS.lineHeight),
+    };
+  }
+
+  function normalizeFontFamilyValue(value, fallback) {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return fallback;
+    }
+    return normalized;
+  }
+
+  function normalizeCssLength(value, fallback) {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return fallback;
+    }
+    return normalized;
+  }
+
+  function normalizeLineHeight(value, fallback) {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return fallback;
+    }
+    return normalized;
+  }
+
+  function normalizeHexColor(value, fallback) {
+    const normalized = toHexColor(value, fallback || "#000000");
+    return normalized || (fallback || "#000000");
+  }
+
+  function getActiveThemePreset() {
+    state.theme = normalizeThemeState(state.theme);
+    return state.theme.themes.find((item) => item.id === state.theme.activeThemeId) || state.theme.themes[0];
+  }
+
+  function buildThemeExternalFontFamilyValue(family) {
+    const normalized = normalizeFontFamilyName(family);
+    if (!normalized) {
+      return DEFAULT_THEME_FONTS.bodyFamily;
+    }
+    return `"${normalized.replace(/"/g, '\\"')}", system-ui, sans-serif`;
   }
 
   function ensureFontFamilies(value) {
@@ -1909,6 +3195,18 @@
     return /gradient\s*\(/i.test(String(value || ""));
   }
 
+  function detectBackgroundMode(overrides, computed) {
+    const overrideBackground = String(overrides.background ?? "").trim();
+    const computedBackgroundImage = String(computed["background-image"] ?? "").trim();
+    if (isGradientValue(overrideBackground)) {
+      return "gradient";
+    }
+    if (!overrideBackground && isGradientValue(computedBackgroundImage)) {
+      return "gradient";
+    }
+    return "solid";
+  }
+
   function toHexColor(value, fallback) {
     const input = String(value || "").trim();
     if (!input) {
@@ -1948,6 +3246,7 @@
   function hasPatchContent() {
     const runtimeDiff = JSON.stringify(normalizeRuntimeLibraries(state.runtimeLibraries)) !== JSON.stringify(normalizeRuntimeLibraries(state.defaultsLibraries));
     const runtimeFontsDiff = JSON.stringify(normalizeRuntimeFonts(state.runtimeFonts)) !== JSON.stringify(normalizeRuntimeFonts(state.defaultsFonts));
+    const themeDiff = JSON.stringify(normalizeThemeState(state.theme)) !== JSON.stringify(normalizeThemeState(state.defaultsTheme));
     return (
       Object.keys(state.overridesMeta).length > 0 ||
       Object.keys(state.attributesMeta).length > 0 ||
@@ -1955,7 +3254,8 @@
       state.addedNodes.length > 0 ||
       state.deletedNodes.length > 0 ||
       runtimeDiff ||
-      runtimeFontsDiff
+      runtimeFontsDiff ||
+      themeDiff
     );
   }
 

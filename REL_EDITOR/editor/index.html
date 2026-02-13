@@ -76,6 +76,7 @@
         <button class="tab-btn active" data-tab="information" type="button">information</button>
         <button class="tab-btn" data-tab="tree" type="button">tree</button>
         <button class="tab-btn" data-tab="add" type="button">add</button>
+        <button class="tab-btn" data-tab="theme" type="button">theme</button>
       </div>
 
       <div class="tab-content active" data-tab-content="information">
@@ -99,6 +100,99 @@
           <h3 class="add-title">Library Blocks</h3>
           <div id="addExternalList" class="add-list"></div>
         </div>
+      </div>
+
+      <div class="tab-content" data-tab-content="theme">
+        <section class="theme-card">
+          <h3 class="theme-title">Theme Presets</h3>
+          <label class="theme-row">
+            <span>Preset</span>
+            <select id="themePresetSelect"></select>
+          </label>
+          <label class="theme-row">
+            <span>Name</span>
+            <input id="themeNameInput" type="text" placeholder="New Theme">
+          </label>
+          <div class="theme-actions">
+            <button id="newThemePresetBtn" type="button">New</button>
+            <button id="saveThemePresetBtn" type="button">Save</button>
+            <button id="deleteThemePresetBtn" type="button">Delete</button>
+          </div>
+        </section>
+
+        <section class="theme-card">
+          <h3 class="theme-title">Color Palette</h3>
+          <div id="themePaletteList" class="theme-palette-list"></div>
+          <div id="themeCustomPaletteList" class="theme-palette-list"></div>
+          <div class="theme-actions">
+            <button id="addCustomColorBtn" type="button">Add custom color</button>
+          </div>
+        </section>
+
+        <section class="theme-card">
+          <h3 class="theme-title">Apply Palette</h3>
+          <label class="theme-row">
+            <span>color</span>
+            <select id="paletteColorSelect"></select>
+          </label>
+          <label class="theme-row">
+            <span>background-color</span>
+            <select id="paletteBackgroundSelect"></select>
+          </label>
+          <label class="theme-row">
+            <span>border-color</span>
+            <select id="paletteBorderSelect"></select>
+          </label>
+          <div class="theme-actions">
+            <button id="applyPaletteToSelectedBtn" type="button">Apply Palette to Selected Element</button>
+          </div>
+        </section>
+
+        <section class="theme-card">
+          <h3 class="theme-title">Font Presets</h3>
+          <label class="theme-row">
+            <span>Body Font</span>
+            <select id="themeBodyFontSelect"></select>
+          </label>
+          <label class="theme-row">
+            <span>Heading Font</span>
+            <select id="themeHeadingFontSelect"></select>
+          </label>
+          <label class="theme-row">
+            <span>Body Size</span>
+            <input id="themeBodySizeInput" type="text" placeholder="16px">
+          </label>
+          <label class="theme-row">
+            <span>H1 Size</span>
+            <input id="themeH1SizeInput" type="text" placeholder="2.5rem">
+          </label>
+          <label class="theme-row">
+            <span>H2 Size</span>
+            <input id="themeH2SizeInput" type="text" placeholder="2rem">
+          </label>
+          <label class="theme-row">
+            <span>H3 Size</span>
+            <input id="themeH3SizeInput" type="text" placeholder="1.5rem">
+          </label>
+          <label class="theme-row">
+            <span>Small Size</span>
+            <input id="themeSmallSizeInput" type="text" placeholder="0.875rem">
+          </label>
+          <label class="theme-row">
+            <span>Line Height</span>
+            <input id="themeLineHeightInput" type="text" placeholder="1.5">
+          </label>
+          <div class="theme-actions">
+            <button id="themeLoadFontsBtn" type="button">Load fonts</button>
+            <button id="applyFontsGloballyBtn" type="button">Apply fonts globally</button>
+          </div>
+        </section>
+
+        <section class="theme-card">
+          <div class="theme-actions">
+            <button id="applyThemeToPageBtn" type="button">Apply Theme to Page</button>
+          </div>
+        </section>
       </div>
     </section>
 
