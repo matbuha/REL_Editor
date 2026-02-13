@@ -1,0 +1,5 @@
+.rel-editor-selected {
+  outline: 2px solid #ff6a00 !important;
+  outline-offset: 1px !important;
+  cursor: crosshair !important;
+}

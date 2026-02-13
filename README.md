@@ -1,2 +1,4 @@
 # REL_Editor
-Open source HTML &amp; CSS Editor Elementor like
+Open source HTML &amp; CSS Editor Elementor like.
+
+See `REL_EDITOR/docs/README.md` for setup and usage.

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>REL Editor</title>
+  <link rel="stylesheet" href="./editor_styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">REL_EDITOR</div>
+    <div class="project-picker">
+      <label>
+        Project Root
+        <input id="projectRootInput" type="text" placeholder="C:/path/to/project">
+      </label>
+      <label>
+        Index Path
+        <input id="indexPathInput" type="text" placeholder="index.html">
+      </label>
+      <button id="loadProjectBtn" type="button">Load Project</button>
+      <button id="savePatchBtn" type="button">Save Patch</button>
+      <button id="exportSafeBtn" type="button">Export Safe</button>
+    </div>
+    <div id="statusText" class="status">Ready</div>
+  </header>
+
+  <main class="layout">
+    <section class="panel panel-left">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="information" type="button">information</button>
+        <button class="tab-btn" data-tab="tree" type="button">tree</button>
+        <button class="tab-btn" data-tab="add" type="button">add</button>
+      </div>
+
+      <div class="tab-content active" data-tab-content="information">
+        <h2>Selected Element</h2>
+        <pre id="selectionInfo" class="info-box">No element selected.</pre>
+      </div>
+
+      <div class="tab-content" data-tab-content="tree">
+        <div class="tree-toolbar">
+          <input id="treeSearchInput" type="text" placeholder="Search tag, .class, #id">
+          <button id="refreshTreeBtn" type="button">Refresh</button>
+        </div>
+        <div id="treeContainer" class="tree-box"></div>
+      </div>
+
+      <div class="tab-content" data-tab-content="add">
+        <p>Placeholder for add tab (MVP later).</p>
+      </div>
+    </section>
+
+    <section class="panel panel-middle">
+      <iframe id="liveFrame" title="Live Preview"></iframe>
+    </section>
+
+    <section class="panel panel-right">
+      <h2>Style Controls</h2>
+      <div id="controlsContainer" class="controls"></div>
+    </section>
+  </main>
+
+  <script src="./editor_app.js"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  background: linear-gradient(180deg, #f8f8f8 0%, #f0f5f8 100%);
+  color: #1f1f1f;
+}
+
+.hero {
+  text-align: center;
+  padding: 56px 20px;
+  background: linear-gradient(135deg, #def3ff 0%, #f7ffea 100%);
+}
+
+.subtitle {
+  max-width: 640px;
+  margin: 0 auto 20px;
+}
+
+.cta {
+  display: inline-block;
+  text-decoration: none;
+  background: #0d5ea6;
+  color: white;
+  padding: 10px 16px;
+  border-radius: 8px;
+}
+
+.content {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px;
+}
+
+.card-row {
+  display: flex;
+  gap: 16px;
+}
+
+.card {
+  flex: 1;
+  background: white;
+  border: 1px solid #d8d8d8;
+  border-radius: 10px;
+  padding: 14px;
+}

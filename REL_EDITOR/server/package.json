@@ -1,0 +1,14 @@
+{
+  "name": "rel-editor-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mime-types": "^2.1.35"
+  }
+}
