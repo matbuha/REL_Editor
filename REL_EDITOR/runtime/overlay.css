@@ -1,3 +1,10 @@
+:root {
+  --rel-hover-padding-fill: rgba(0, 140, 255, 0.25);
+  --rel-hover-padding-stroke: rgba(0, 109, 199, 0.62);
+  --rel-hover-margin-fill: rgba(255, 140, 0, 0.22);
+  --rel-hover-margin-stroke: rgba(214, 112, 0, 0.6);
+}
+
 .rel-editor-selected {
   outline: 2px solid #ff6a00 !important;
   outline-offset: 1px !important;
@@ -190,6 +197,60 @@
 }
 
 .rel-hover-info-frame.hidden {
+  display: none !important;
+}
+
+.rel-hover-spacing-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483596;
+  pointer-events: none;
+}
+
+.rel-hover-spacing-root.hidden {
+  display: none !important;
+}
+
+.rel-hover-spacing-segment {
+  position: fixed;
+  box-sizing: border-box;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid transparent;
+}
+
+.rel-hover-spacing-segment.hidden {
+  display: none !important;
+}
+
+.rel-hover-spacing-padding {
+  background: var(--rel-hover-padding-fill);
+  border-color: var(--rel-hover-padding-stroke);
+}
+
+.rel-hover-spacing-margin {
+  background: var(--rel-hover-margin-fill);
+  border-color: var(--rel-hover-margin-stroke);
+}
+
+.rel-hover-spacing-value {
+  pointer-events: none;
+  font: 10px/1.1 "Segoe UI", Arial, sans-serif;
+  border-radius: 3px;
+  padding: 1px 3px;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.74);
+  color: #06345a;
+}
+
+.rel-hover-spacing-margin .rel-hover-spacing-value {
+  color: #5f3200;
+}
+
+.rel-hover-spacing-value.hidden {
   display: none !important;
 }
 

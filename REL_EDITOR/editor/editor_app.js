@@ -185,6 +185,7 @@
   const LAYER_ORDER_MAX = 1000;
   const ORDER_AUTO_POSITION_META_KEY = "_relAutoPositionForZ";
   const ORDER_AUTO_POSITION_PREV_META_KEY = "_relAutoPositionPrev";
+  const STYLE_COPY_EXCLUDED_PROPS = new Set(["transform"]);
   const ROOT_LIKE_LAYER_TAGS = new Set(["html", "body"]);
   const BG_META_SOLID_KEY = "_relBgSolid";
   const BG_META_GRADIENT_KEY = "_relBgGradient";
@@ -285,6 +286,7 @@
     addedNodes: [],
     deletedNodes: [],
     movedNodes: [],
+    copiedStyles: null,
     lastSelection: null,
     lastTreeSnapshot: [],
     overlayReady: false,
@@ -1025,6 +1027,128 @@
         },
       });
     }
+  }
+
+  function handlePreviewStyleAction(payload) {
+    const safePayload = payload && typeof payload === "object" ? payload : {};
+    const action = String(safePayload.action || "").trim().toLowerCase();
+    const relId = String(safePayload.relId || state.selectedRelId || "").trim();
+    if (!action || !relId) {
+      return;
+    }
+
+    if (action === "copy-styles") {
+      copyPatchStylesFromRelId(relId);
+      return;
+    }
+
+    if (action === "paste-styles") {
+      pastePatchStylesToRelId(relId);
+    }
+  }
+
+  function copyPatchStylesFromRelId(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+
+    const sourceOverrides = ensurePlainObject(state.overridesMeta[safeRelId]);
+    const styleOverridesObject = extractCopyableStyleOverrides(sourceOverrides);
+    state.copiedStyles = {
+      version: PATCH_VERSION,
+      fromRelId: safeRelId,
+      timestamp: Date.now(),
+      styleOverridesObject,
+    };
+    setStatus("Styles copied");
+  }
+
+  function pastePatchStylesToRelId(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+
+    const copied = state.copiedStyles && typeof state.copiedStyles === "object"
+      ? state.copiedStyles
+      : null;
+    if (!copied) {
+      setStatus("No copied styles", true);
+      return;
+    }
+
+    const nextOverrides = extractCopyableStyleOverrides(copied.styleOverridesObject || {});
+    if (Object.keys(nextOverrides).length === 0) {
+      setStatus("No copied styles", true);
+      return;
+    }
+
+    const previousOverrides = ensurePlainObject(state.overridesMeta[safeRelId]);
+    const previousStyleKeys = Object.keys(previousOverrides)
+      .map((property) => String(property || "").trim().toLowerCase())
+      .filter((property) => property && !isStyleMetadataKey(property));
+    state.overridesMeta[safeRelId] = { ...nextOverrides };
+
+    const keysToSync = new Set([...previousStyleKeys, ...Object.keys(nextOverrides)]);
+    for (const property of keysToSync) {
+      if (!property || isStyleMetadataKey(property)) {
+        continue;
+      }
+      const value = Object.prototype.hasOwnProperty.call(nextOverrides, property)
+        ? String(nextOverrides[property] ?? "")
+        : "";
+      sendToOverlay({
+        type: "REL_APPLY_STYLE",
+        payload: { relId: safeRelId, property, value },
+      });
+    }
+
+    if (state.lastSelection && state.selectedRelId === safeRelId) {
+      updateStyleControlValues(
+        state.lastSelection.computed || {},
+        state.overridesMeta[safeRelId] || {},
+        {
+          selectionChanged: false,
+          relId: safeRelId,
+          selection: state.lastSelection,
+        }
+      );
+      updateSelectionInfo(
+        state.lastSelection,
+        state.overridesMeta[safeRelId] || {},
+        state.attributesMeta[safeRelId] || {},
+        state.linksMeta[safeRelId] || {}
+      );
+    }
+
+    setStatus("Styles pasted");
+  }
+
+  function extractCopyableStyleOverrides(overrides) {
+    const source = ensurePlainObject(overrides);
+    const copied = {};
+    const autoPositionApplied = isStyleMetadataTrue(source[ORDER_AUTO_POSITION_META_KEY]);
+    for (const [property, rawValue] of Object.entries(source)) {
+      const safeProperty = String(property || "").trim().toLowerCase();
+      if (!safeProperty || isStyleMetadataKey(safeProperty)) {
+        continue;
+      }
+      if (STYLE_COPY_EXCLUDED_PROPS.has(safeProperty)) {
+        continue;
+      }
+
+      const normalizedValue = normalizeRgbaAlphaInCssValue(String(rawValue ?? ""));
+      const trimmedValue = normalizedValue.trim();
+      if (!trimmedValue) {
+        continue;
+      }
+      if (safeProperty === "position" && autoPositionApplied && trimmedValue.toLowerCase() === "relative") {
+        continue;
+      }
+      copied[safeProperty] = normalizedValue;
+    }
+    return copied;
   }
 
   function showTreeDragTooltip(text, clientX, clientY) {
@@ -3774,6 +3898,7 @@
     state.selectorMap = {};
     state.attributeOverrides = {};
     state.textOverrides = {};
+    state.copiedStyles = null;
     dom.projectRootInput.value = data.project_root;
     dom.projectTypeSelect.value = state.projectType;
     dom.indexPathInput.value = data.index_path;
@@ -3828,6 +3953,7 @@
     state.addedNodes = [];
     state.deletedNodes = [];
     state.movedNodes = [];
+    state.copiedStyles = null;
     state.lastSelection = null;
     state.lastTreeSnapshot = [];
     state.overlayReady = false;
@@ -4618,6 +4744,11 @@
     if (msg.type === "REL_MOVE_ERROR") {
       const details = msg.payload || {};
       setStatus(details.message || "Move failed", true);
+      return;
+    }
+
+    if (msg.type === "REL_PREVIEW_STYLE_ACTION") {
+      handlePreviewStyleAction(msg.payload || {});
       return;
     }
 

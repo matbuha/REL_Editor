@@ -154,6 +154,16 @@
       label: "Insert section below",
       tooltip: "Insert a new section immediately after this element.",
     },
+    {
+      action: "copy-styles",
+      label: "Copy styles",
+      tooltip: "Copies only patch overrides, not computed styles",
+    },
+    {
+      action: "paste-styles",
+      label: "Paste styles",
+      tooltip: "Pastes patch overrides onto selected element",
+    },
   ];
   const QUICK_TOOLBAR_VIEWPORT_GAP_PX = 8;
   const QUICK_TOOLBAR_DEFAULT_OFFSET_PX = 10;
@@ -161,6 +171,9 @@
   const HOVER_INFO_VIEWPORT_GAP_PX = 6;
   const HOVER_INFO_LABEL_GAP_PX = 6;
   const HOVER_INFO_ZERO_EPSILON = 0.5;
+  const HOVER_INFO_STRIP_TEXT_MIN_MAIN_PX = 18;
+  const HOVER_INFO_STRIP_TEXT_MIN_CROSS_PX = 14;
+  const HOVER_INFO_SIDES = ["top", "right", "bottom", "left"];
   const IMPORTANT_STYLE_PROPS = new Set([
     "background",
     "background-color",
@@ -254,6 +267,8 @@
       labelMain: null,
       labelMeta: null,
       badges: null,
+      spacingRoot: null,
+      spacingSegments: {},
       visible: false,
       pendingElement: null,
       rafId: 0,
@@ -546,8 +561,23 @@
       && state.hoverInfo.frame.isConnected
       && state.hoverInfo.label instanceof HTMLElement
       && state.hoverInfo.label.isConnected
+      && state.hoverInfo.spacingRoot instanceof HTMLElement
+      && state.hoverInfo.spacingRoot.isConnected
     ) {
       return;
+    }
+
+    const spacingRoot = document.createElement("div");
+    spacingRoot.className = "rel-hover-spacing-root hidden";
+    spacingRoot.dataset.relRuntime = "hover-info";
+    spacingRoot.setAttribute("aria-hidden", "true");
+    const spacingSegments = {};
+    for (const boxType of ["padding", "margin"]) {
+      for (const side of HOVER_INFO_SIDES) {
+        const segment = createHoverSpacingSegment(boxType, side);
+        spacingRoot.appendChild(segment.root);
+        spacingSegments[`${boxType}-${side}`] = segment;
+      }
     }
 
     const frame = document.createElement("div");
@@ -559,6 +589,7 @@
     label.className = "rel-hover-info-label hidden";
     label.dataset.relRuntime = "hover-info";
     label.setAttribute("aria-hidden", "true");
+    label.title = "Enhanced hover includes padding and margin visualization.";
 
     const main = document.createElement("div");
     main.className = "rel-hover-info-main";
@@ -572,13 +603,31 @@
     badges.className = "rel-hover-info-badges";
     label.appendChild(badges);
 
+    document.body.appendChild(spacingRoot);
     document.body.appendChild(frame);
     document.body.appendChild(label);
+    state.hoverInfo.spacingRoot = spacingRoot;
+    state.hoverInfo.spacingSegments = spacingSegments;
     state.hoverInfo.frame = frame;
     state.hoverInfo.label = label;
     state.hoverInfo.labelMain = main;
     state.hoverInfo.labelMeta = meta;
     state.hoverInfo.badges = badges;
+  }
+
+  function createHoverSpacingSegment(boxType, side) {
+    const root = document.createElement("div");
+    root.className = `rel-hover-spacing-segment rel-hover-spacing-${boxType} rel-hover-spacing-${side} hidden`;
+    root.dataset.relRuntime = "hover-info";
+    root.setAttribute("aria-hidden", "true");
+    root.dataset.relSpacingBox = boxType;
+    root.dataset.relSpacingSide = side;
+
+    const value = document.createElement("span");
+    value.className = "rel-hover-spacing-value hidden";
+    root.appendChild(value);
+
+    return { root, value };
   }
 
   function resolveHoverInfoTargetElement(rawTarget) {
@@ -653,7 +702,7 @@
     label.classList.remove("hidden");
     label.setAttribute("aria-hidden", "false");
     state.hoverInfo.visible = true;
-    positionHoverInfoOverlay(rect);
+    positionHoverInfoOverlay(rect, data);
   }
 
   function buildHoverInfoData(element) {
@@ -743,7 +792,7 @@
     return String(rounded).replace(/(\.\d*?[1-9])0+$/g, "$1").replace(/\.0+$/g, "");
   }
 
-  function positionHoverInfoOverlay(rect) {
+  function positionHoverInfoOverlay(rect, data) {
     const frame = state.hoverInfo.frame;
     const label = state.hoverInfo.label;
     if (!(frame instanceof HTMLElement) || !(label instanceof HTMLElement)) {
@@ -772,6 +821,206 @@
     labelTop = clamp(labelTop, HOVER_INFO_VIEWPORT_GAP_PX, maxTop);
     label.style.left = `${Math.round(labelLeft)}px`;
     label.style.top = `${Math.round(labelTop)}px`;
+
+    positionHoverSpacingOverlay(rect, data);
+  }
+
+  function positionHoverSpacingOverlay(rect, data) {
+    const root = state.hoverInfo.spacingRoot;
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+
+    const boxData = data && typeof data === "object" ? data : null;
+    if (!boxData) {
+      hideHoverSpacingOverlay();
+      return;
+    }
+
+    const viewportWidth = Math.max(0, Number(window.innerWidth) || 0);
+    const viewportHeight = Math.max(0, Number(window.innerHeight) || 0);
+    let visibleCount = 0;
+    for (const boxType of ["padding", "margin"]) {
+      const box = boxData[boxType] && typeof boxData[boxType] === "object"
+        ? boxData[boxType]
+        : {};
+      for (const side of HOVER_INFO_SIDES) {
+        const segment = state.hoverInfo.spacingSegments[`${boxType}-${side}`] || null;
+        if (!segment || !(segment.root instanceof HTMLElement)) {
+          continue;
+        }
+
+        const rawValue = Number(box[side]) || 0;
+        const value = Math.abs(rawValue) <= HOVER_INFO_ZERO_EPSILON ? 0 : rawValue;
+        if (value <= 0) {
+          hideHoverSpacingSegment(segment);
+          continue;
+        }
+
+        const stripeRect = boxType === "padding"
+          ? buildPaddingSpacingRect(rect, box, side)
+          : buildMarginSpacingRect(rect, box, side);
+        const clampedRect = clampHoverSpacingRect(stripeRect, viewportWidth, viewportHeight);
+        if (!clampedRect) {
+          hideHoverSpacingSegment(segment);
+          continue;
+        }
+
+        segment.root.style.left = `${Math.round(clampedRect.left)}px`;
+        segment.root.style.top = `${Math.round(clampedRect.top)}px`;
+        segment.root.style.width = `${Math.round(clampedRect.width)}px`;
+        segment.root.style.height = `${Math.round(clampedRect.height)}px`;
+        segment.root.classList.remove("hidden");
+        segment.root.setAttribute("aria-hidden", "false");
+
+        if (segment.value instanceof HTMLElement) {
+          segment.value.textContent = formatHoverBoxValue(value);
+          const showValue = shouldShowSpacingValue(side, clampedRect.width, clampedRect.height);
+          segment.value.classList.toggle("hidden", !showValue);
+        }
+
+        visibleCount += 1;
+      }
+    }
+
+    if (visibleCount > 0) {
+      root.classList.remove("hidden");
+      root.setAttribute("aria-hidden", "false");
+      return;
+    }
+    hideHoverSpacingOverlay();
+  }
+
+  function buildPaddingSpacingRect(rect, padding, side) {
+    const left = Number(rect.left) || 0;
+    const top = Number(rect.top) || 0;
+    const width = Math.max(0, Number(rect.width) || 0);
+    const height = Math.max(0, Number(rect.height) || 0);
+    const right = left + width;
+    const bottom = top + height;
+    const topValue = Math.max(0, Number(padding.top) || 0);
+    const rightValue = Math.max(0, Number(padding.right) || 0);
+    const bottomValue = Math.max(0, Number(padding.bottom) || 0);
+    const leftValue = Math.max(0, Number(padding.left) || 0);
+
+    if (side === "top") {
+      return { left, top, width, height: topValue };
+    }
+    if (side === "right") {
+      return { left: right - rightValue, top, width: rightValue, height };
+    }
+    if (side === "bottom") {
+      return { left, top: bottom - bottomValue, width, height: bottomValue };
+    }
+    return { left, top, width: leftValue, height };
+  }
+
+  function buildMarginSpacingRect(rect, margin, side) {
+    const left = Number(rect.left) || 0;
+    const top = Number(rect.top) || 0;
+    const width = Math.max(0, Number(rect.width) || 0);
+    const height = Math.max(0, Number(rect.height) || 0);
+    const right = left + width;
+    const bottom = top + height;
+    const topValue = Math.max(0, Number(margin.top) || 0);
+    const rightValue = Math.max(0, Number(margin.right) || 0);
+    const bottomValue = Math.max(0, Number(margin.bottom) || 0);
+    const leftValue = Math.max(0, Number(margin.left) || 0);
+    const totalWidth = width + leftValue + rightValue;
+    const totalHeight = height + topValue + bottomValue;
+
+    if (side === "top") {
+      return {
+        left: left - leftValue,
+        top: top - topValue,
+        width: totalWidth,
+        height: topValue,
+      };
+    }
+    if (side === "right") {
+      return {
+        left: right,
+        top: top - topValue,
+        width: rightValue,
+        height: totalHeight,
+      };
+    }
+    if (side === "bottom") {
+      return {
+        left: left - leftValue,
+        top: bottom,
+        width: totalWidth,
+        height: bottomValue,
+      };
+    }
+    return {
+      left: left - leftValue,
+      top: top - topValue,
+      width: leftValue,
+      height: totalHeight,
+    };
+  }
+
+  function clampHoverSpacingRect(rect, viewportWidth, viewportHeight) {
+    const left = Number(rect?.left);
+    const top = Number(rect?.top);
+    const width = Math.max(0, Number(rect?.width) || 0);
+    const height = Math.max(0, Number(rect?.height) || 0);
+    if (!Number.isFinite(left) || !Number.isFinite(top) || width <= 0 || height <= 0) {
+      return null;
+    }
+
+    const safeViewportWidth = Math.max(0, Number(viewportWidth) || 0);
+    const safeViewportHeight = Math.max(0, Number(viewportHeight) || 0);
+    const right = left + width;
+    const bottom = top + height;
+    const clampedLeft = clamp(left, 0, safeViewportWidth);
+    const clampedTop = clamp(top, 0, safeViewportHeight);
+    const clampedRight = clamp(right, 0, safeViewportWidth);
+    const clampedBottom = clamp(bottom, 0, safeViewportHeight);
+    const clampedWidth = Math.max(0, clampedRight - clampedLeft);
+    const clampedHeight = Math.max(0, clampedBottom - clampedTop);
+    if (clampedWidth <= 0 || clampedHeight <= 0) {
+      return null;
+    }
+
+    return {
+      left: clampedLeft,
+      top: clampedTop,
+      width: clampedWidth,
+      height: clampedHeight,
+    };
+  }
+
+  function shouldShowSpacingValue(side, width, height) {
+    const horizontal = side === "top" || side === "bottom";
+    const mainSize = horizontal ? Number(width) : Number(height);
+    const crossSize = horizontal ? Number(height) : Number(width);
+    return mainSize >= HOVER_INFO_STRIP_TEXT_MIN_MAIN_PX && crossSize >= HOVER_INFO_STRIP_TEXT_MIN_CROSS_PX;
+  }
+
+  function hideHoverSpacingSegment(segment) {
+    if (!segment || !(segment.root instanceof HTMLElement)) {
+      return;
+    }
+    segment.root.classList.add("hidden");
+    segment.root.setAttribute("aria-hidden", "true");
+    if (segment.value instanceof HTMLElement) {
+      segment.value.classList.add("hidden");
+      segment.value.textContent = "";
+    }
+  }
+
+  function hideHoverSpacingOverlay() {
+    const root = state.hoverInfo.spacingRoot;
+    if (root instanceof HTMLElement) {
+      root.classList.add("hidden");
+      root.setAttribute("aria-hidden", "true");
+    }
+    const segments = state.hoverInfo.spacingSegments || {};
+    for (const segment of Object.values(segments)) {
+      hideHoverSpacingSegment(segment);
+    }
   }
 
   function hideHoverInfo() {
@@ -785,6 +1034,7 @@
       label.classList.add("hidden");
       label.setAttribute("aria-hidden", "true");
     }
+    hideHoverSpacingOverlay();
     state.hoverInfo.visible = false;
     state.hoverInfo.pendingElement = null;
     state.hoverInfo.cachedElement = null;
@@ -1518,6 +1768,17 @@
     }
     if (action === "insert-section-below") {
       return runInsertNearAction(targetElement, "section", "after");
+    }
+    if (action === "copy-styles" || action === "paste-styles") {
+      postToEditor({
+        type: "REL_PREVIEW_STYLE_ACTION",
+        payload: {
+          action,
+          relId: ensureRelId(targetElement),
+          fallbackSelector: buildStableSelector(targetElement),
+        },
+      });
+      return true;
     }
     return false;
   }
