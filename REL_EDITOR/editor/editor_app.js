@@ -196,6 +196,14 @@
   const BG_SIZE_OPTIONS = ["auto", "contain", "cover"];
   const BG_POSITION_OPTIONS = ["center", "top", "bottom", "left", "right"];
   const BG_REPEAT_OPTIONS = ["no-repeat", "repeat"];
+  const BACKGROUND_IMPORTANT_PROPS = new Set([
+    "background",
+    "background-color",
+    "background-image",
+    "background-size",
+    "background-position",
+    "background-repeat",
+  ]);
   const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
   const LEFT_MIN_PX = 200;
   const RIGHT_MIN_PX = 260;
@@ -2176,9 +2184,10 @@
         applyStyleForRelId(relId, "background-repeat", "");
       }
     } else {
-      applyStyleForRelId(relId, "background", draft.solid);
+      // Solid mode must explicitly clear shorthand/image leftovers so color is always visible.
+      applyStyleForRelId(relId, "background", "");
+      applyStyleForRelId(relId, "background-color", draft.solid);
       applyStyleForRelId(relId, "background-image", "none");
-      applyStyleForRelId(relId, "background-color", "");
       applyStyleForRelId(relId, "background-size", "");
       applyStyleForRelId(relId, "background-position", "");
       applyStyleForRelId(relId, "background-repeat", "");
@@ -5344,7 +5353,8 @@
 
       lines.push(`[data-rel-id="${cssEscape(relId)}"] {`);
       for (const [property, value] of entries) {
-        lines.push(`  ${property}: ${value};`);
+        const needsImportant = shouldUseImportantInOverride(property, value);
+        lines.push(`  ${property}: ${value}${needsImportant ? " !important" : ""};`);
       }
       lines.push("}");
       lines.push("");
@@ -5593,6 +5603,14 @@
       result[safeRelId] = { text: String(entry.text || "") };
     }
     return result;
+  }
+
+  function shouldUseImportantInOverride(property, value) {
+    const safeProperty = String(property || "").trim().toLowerCase();
+    if (!BACKGROUND_IMPORTANT_PROPS.has(safeProperty)) {
+      return false;
+    }
+    return !/\s!important\s*$/i.test(String(value || ""));
   }
 
   function normalizeMovedNodes(value) {

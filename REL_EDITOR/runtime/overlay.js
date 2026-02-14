@@ -51,6 +51,14 @@
   const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV", "SECTION"]);
   const IS_VITE_PROXY_MODE = String(window.location.pathname || "").startsWith("/vite-proxy");
   const VITE_GLOBAL_STYLE_PROPS = ["background", "background-color", "background-image", "color"];
+  const IMPORTANT_STYLE_PROPS = new Set([
+    "background",
+    "background-color",
+    "background-image",
+    "background-size",
+    "background-position",
+    "background-repeat",
+  ]);
 
   const LIBRARY_ASSETS = {
     bootstrap: {
@@ -697,7 +705,8 @@
     if (value === "") {
       element.style.removeProperty(safeProperty);
     } else {
-      element.style.setProperty(safeProperty, value);
+      const priority = IMPORTANT_STYLE_PROPS.has(safeProperty) ? "important" : "";
+      element.style.setProperty(safeProperty, value, priority);
     }
 
     if (IS_VITE_PROXY_MODE && element.tagName === "BODY" && VITE_GLOBAL_STYLE_PROPS.includes(safeProperty)) {

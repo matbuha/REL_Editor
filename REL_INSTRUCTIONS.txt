@@ -14,3 +14,14 @@ REL_EDITOR Tree Drag and Drop
 6. Invalid drops are blocked (self/descendant/system nodes).
 7. After drop, preview updates immediately and the moved node stays selected.
 8. Click Save Patch to persist structural moves in rel_editor/patch.json; Export Safe applies them in REL_* outputs.
+
+Background Solid regression check
+
+1. Load demo_project.
+2. Select a visible section (for example .hero), switch Background Mode to Solid, pick a strong color.
+3. Confirm color appears immediately in preview.
+4. Select a container/div inside that section, set another solid color, confirm immediate preview update.
+5. Click Save Patch and verify rel_editor/override.css has [data-rel-id="..."] rules with:
+   - background-color: <color> !important;
+   - background-image: none !important;
+6. Switch the same element from Image/Gradient back to Solid and verify image/gradient no longer covers the solid.
