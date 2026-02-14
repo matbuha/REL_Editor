@@ -213,6 +213,9 @@
   const TREE_AUTO_EXPAND_DELAY_MS = 750;
   const TREE_DROP_INSIDE_MIN_RATIO = 0.32;
   const TREE_DROP_INSIDE_MAX_RATIO = 0.68;
+  const NAVIGATOR_DEBOUNCE_MS = 150;
+  const NAVIGATOR_MAX_RESULTS = 50;
+  const NAVIGATOR_PATH_HINT_MAX_LEN = 40;
   const TREE_VOID_TAGS = new Set(["img", "input", "br", "hr", "meta", "link", "source", "track", "wbr"]);
   const TREE_PROTECTED_TAGS = new Set(["html", "head"]);
   const TOOLTIP_DEV_CHECK_DELAY_MS = 200;
@@ -324,6 +327,20 @@
       root: null,
       visible: false,
       targetRelId: "",
+    },
+    navigator: {
+      root: null,
+      modal: null,
+      searchInput: null,
+      resultsList: null,
+      emptyState: null,
+      footerCount: null,
+      visible: false,
+      query: "",
+      pendingFilterTimer: 0,
+      index: [],
+      filtered: [],
+      activeIndex: -1,
     },
     controls: {
       styleInputs: {},
@@ -1040,6 +1057,467 @@
     tooltip.setAttribute("aria-hidden", "true");
   }
 
+  function ensureNavigatorOverlay() {
+    if (state.navigator.root && state.navigator.root.isConnected) {
+      return state.navigator.root;
+    }
+
+    const root = document.createElement("div");
+    root.className = "rel-navigator-backdrop hidden";
+    root.setAttribute("aria-hidden", "true");
+
+    const modal = document.createElement("div");
+    modal.className = "rel-navigator-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "Element Navigator");
+    root.appendChild(modal);
+
+    const header = document.createElement("div");
+    header.className = "rel-navigator-header";
+    modal.appendChild(header);
+
+    const title = document.createElement("div");
+    title.className = "rel-navigator-title";
+    title.textContent = "Navigator";
+    header.appendChild(title);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "rel-navigator-close";
+    closeBtn.textContent = "X";
+    setTooltipKey(closeBtn, "navigator.close");
+    header.appendChild(closeBtn);
+
+    const searchWrap = document.createElement("div");
+    searchWrap.className = "rel-navigator-search-wrap";
+    modal.appendChild(searchWrap);
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.className = "rel-navigator-search";
+    searchInput.placeholder = "Search tag, #id, .class, text";
+    setTooltipKey(searchInput, "navigator.search");
+    searchWrap.appendChild(searchInput);
+
+    const resultsList = document.createElement("ul");
+    resultsList.className = "rel-navigator-results";
+    modal.appendChild(resultsList);
+
+    const emptyState = document.createElement("div");
+    emptyState.className = "rel-navigator-empty hidden";
+    emptyState.textContent = "No matching elements";
+    modal.appendChild(emptyState);
+
+    const footer = document.createElement("div");
+    footer.className = "rel-navigator-footer";
+    modal.appendChild(footer);
+
+    const footerCount = document.createElement("span");
+    footerCount.textContent = "0 results";
+    footer.appendChild(footerCount);
+
+    const footerNote = document.createElement("span");
+    footerNote.className = "rel-navigator-footer-note";
+    footerNote.textContent = "Up/Down navigate, Enter select, Esc close";
+    footer.appendChild(footerNote);
+
+    root.addEventListener("pointerdown", (event) => {
+      if (event.target === root) {
+        closeNavigatorOverlay();
+      }
+    });
+
+    closeBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeNavigatorOverlay();
+    });
+
+    searchInput.addEventListener("input", (event) => {
+      const next = event.target instanceof HTMLInputElement ? event.target.value : "";
+      scheduleNavigatorFilter(next);
+    });
+
+    resultsList.addEventListener("click", (event) => {
+      const target = event.target;
+      const button = target instanceof Element
+        ? target.closest(".rel-navigator-item")
+        : null;
+      if (!(button instanceof HTMLButtonElement) || button.disabled) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const index = Number.parseInt(button.dataset.navigatorIndex || "-1", 10);
+      selectNavigatorResultByIndex(index);
+    });
+
+    document.body.appendChild(root);
+    state.navigator.root = root;
+    state.navigator.modal = modal;
+    state.navigator.searchInput = searchInput;
+    state.navigator.resultsList = resultsList;
+    state.navigator.emptyState = emptyState;
+    state.navigator.footerCount = footerCount;
+    return root;
+  }
+
+  function isNavigatorShortcut(event) {
+    if (!event || typeof event !== "object") {
+      return false;
+    }
+    const key = String(event.key || "").toLowerCase();
+    if (key !== "n") {
+      return false;
+    }
+    if (event.altKey) {
+      return false;
+    }
+    return Boolean((event.ctrlKey || event.metaKey) && event.shiftKey);
+  }
+
+  function toggleNavigatorOverlay() {
+    if (state.navigator.visible) {
+      closeNavigatorOverlay();
+      return;
+    }
+    openNavigatorOverlay();
+  }
+
+  function openNavigatorOverlay() {
+    const root = ensureNavigatorOverlay();
+    hideTreeContextMenu();
+    refreshNavigatorIndex();
+    root.classList.remove("hidden");
+    root.setAttribute("aria-hidden", "false");
+    state.navigator.visible = true;
+
+    const input = state.navigator.searchInput;
+    if (input instanceof HTMLInputElement) {
+      input.value = state.navigator.query || "";
+      input.focus();
+      input.select();
+    }
+    applyNavigatorFilter(state.navigator.query || "");
+    scheduleTooltipCoverageCheck();
+  }
+
+  function closeNavigatorOverlay() {
+    const root = state.navigator.root;
+    const wasVisible = Boolean(state.navigator.visible);
+    if (root instanceof HTMLElement) {
+      root.classList.add("hidden");
+      root.setAttribute("aria-hidden", "true");
+    }
+    state.navigator.visible = false;
+    clearNavigatorFilterTimer();
+    return wasVisible;
+  }
+
+  function resetNavigatorState() {
+    closeNavigatorOverlay();
+    clearNavigatorFilterTimer();
+    state.navigator.query = "";
+    state.navigator.index = [];
+    state.navigator.filtered = [];
+    state.navigator.activeIndex = -1;
+    if (state.navigator.searchInput instanceof HTMLInputElement) {
+      state.navigator.searchInput.value = "";
+    }
+    if (state.navigator.resultsList instanceof HTMLElement) {
+      state.navigator.resultsList.innerHTML = "";
+    }
+    if (state.navigator.emptyState instanceof HTMLElement) {
+      state.navigator.emptyState.classList.add("hidden");
+      state.navigator.emptyState.textContent = "No matching elements";
+    }
+    if (state.navigator.footerCount instanceof HTMLElement) {
+      state.navigator.footerCount.textContent = "0 results";
+    }
+  }
+
+  function clearNavigatorFilterTimer() {
+    if (!state.navigator.pendingFilterTimer) {
+      return;
+    }
+    clearTimeout(state.navigator.pendingFilterTimer);
+    state.navigator.pendingFilterTimer = 0;
+  }
+
+  function refreshNavigatorIndex() {
+    state.navigator.index = buildNavigatorIndexFromTree(state.lastTreeSnapshot);
+    if (state.navigator.index.length === 0 && state.overlayReady) {
+      requestTreeSnapshot();
+    }
+  }
+
+  function scheduleNavigatorFilter(query) {
+    state.navigator.query = String(query || "");
+    clearNavigatorFilterTimer();
+    state.navigator.pendingFilterTimer = window.setTimeout(() => {
+      state.navigator.pendingFilterTimer = 0;
+      applyNavigatorFilter(state.navigator.query || "", { keepActive: true });
+    }, NAVIGATOR_DEBOUNCE_MS);
+  }
+
+  function applyNavigatorFilter(query, options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const rawQuery = String(query || "");
+    const normalizedQuery = rawQuery.trim().toLowerCase();
+    state.navigator.query = rawQuery;
+    const previousItem = state.navigator.filtered[state.navigator.activeIndex] || null;
+
+    const allMatches = normalizedQuery
+      ? state.navigator.index.filter((item) => item.searchIndex.includes(normalizedQuery))
+      : state.navigator.index.slice();
+    const limited = allMatches.slice(0, NAVIGATOR_MAX_RESULTS);
+    state.navigator.filtered = limited;
+
+    let nextIndex = -1;
+    if (limited.length > 0) {
+      if (opts.keepActive && previousItem && previousItem.relId) {
+        nextIndex = limited.findIndex((item) => item.relId === previousItem.relId);
+      }
+      if (nextIndex < 0) {
+        nextIndex = 0;
+      }
+    }
+    state.navigator.activeIndex = nextIndex;
+
+    renderNavigatorResults(limited, allMatches.length, normalizedQuery);
+    scheduleTooltipCoverageCheck();
+  }
+
+  function renderNavigatorResults(results, totalMatches, normalizedQuery) {
+    const list = state.navigator.resultsList;
+    const emptyState = state.navigator.emptyState;
+    const footerCount = state.navigator.footerCount;
+    if (!(list instanceof HTMLElement) || !(emptyState instanceof HTMLElement) || !(footerCount instanceof HTMLElement)) {
+      return;
+    }
+
+    list.innerHTML = "";
+    const items = Array.isArray(results) ? results : [];
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      const row = document.createElement("li");
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "rel-navigator-item";
+      button.dataset.navigatorIndex = String(index);
+      setTooltipKey(button, "navigator.result");
+      button.dataset.tooltipExtra = `rel-id: ${item.relId}`;
+      if (index === state.navigator.activeIndex) {
+        button.classList.add("active");
+      }
+
+      const main = document.createElement("span");
+      main.className = "rel-navigator-item-main";
+      main.textContent = item.label;
+      button.appendChild(main);
+
+      const path = document.createElement("span");
+      path.className = "rel-navigator-item-path";
+      path.textContent = item.pathHint;
+      button.appendChild(path);
+
+      row.appendChild(button);
+      list.appendChild(row);
+    }
+
+    if (items.length === 0) {
+      emptyState.classList.remove("hidden");
+      emptyState.textContent = normalizedQuery
+        ? "No matching elements"
+        : "No elements available yet";
+    } else {
+      emptyState.classList.add("hidden");
+    }
+
+    if (totalMatches > NAVIGATOR_MAX_RESULTS) {
+      footerCount.textContent = `Showing first ${NAVIGATOR_MAX_RESULTS} of ${totalMatches}`;
+    } else {
+      const suffix = totalMatches === 1 ? "" : "s";
+      footerCount.textContent = `${totalMatches} result${suffix}`;
+    }
+
+    scrollNavigatorActiveIntoView();
+  }
+
+  function handleNavigatorKeyDown(event) {
+    if (!state.navigator.visible) {
+      return false;
+    }
+    const key = String(event.key || "");
+    if (key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeNavigatorOverlay();
+      return true;
+    }
+
+    if (key === "ArrowDown" || key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      const itemsCount = state.navigator.filtered.length;
+      if (itemsCount <= 0) {
+        return true;
+      }
+      const step = key === "ArrowDown" ? 1 : -1;
+      const fallbackStart = key === "ArrowDown" ? -1 : itemsCount;
+      const next = clamp(
+        (state.navigator.activeIndex >= 0 ? state.navigator.activeIndex : fallbackStart) + step,
+        0,
+        itemsCount - 1
+      );
+      setNavigatorActiveIndex(next, { scroll: true });
+      return true;
+    }
+
+    if (key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.navigator.filtered.length <= 0) {
+        return true;
+      }
+      const index = state.navigator.activeIndex >= 0 ? state.navigator.activeIndex : 0;
+      selectNavigatorResultByIndex(index);
+      return true;
+    }
+
+    return false;
+  }
+
+  function setNavigatorActiveIndex(index, options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const itemsCount = state.navigator.filtered.length;
+    const next = itemsCount > 0
+      ? clamp(Number(index), 0, itemsCount - 1)
+      : -1;
+    state.navigator.activeIndex = itemsCount > 0 ? Math.floor(next) : -1;
+
+    const list = state.navigator.resultsList;
+    if (!(list instanceof HTMLElement)) {
+      return;
+    }
+    const buttons = list.querySelectorAll(".rel-navigator-item");
+    for (let i = 0; i < buttons.length; i += 1) {
+      const button = buttons[i];
+      if (!(button instanceof HTMLElement)) {
+        continue;
+      }
+      button.classList.toggle("active", i === state.navigator.activeIndex);
+    }
+    if (opts.scroll) {
+      scrollNavigatorActiveIntoView();
+    }
+  }
+
+  function scrollNavigatorActiveIntoView() {
+    const list = state.navigator.resultsList;
+    if (!(list instanceof HTMLElement) || state.navigator.activeIndex < 0) {
+      return;
+    }
+    const active = list.querySelector(`.rel-navigator-item[data-navigator-index="${state.navigator.activeIndex}"]`);
+    if (active instanceof HTMLElement) {
+      active.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function selectNavigatorResultByIndex(index) {
+    const numericIndex = Number(index);
+    if (!Number.isFinite(numericIndex)) {
+      return false;
+    }
+    const item = state.navigator.filtered[Math.floor(numericIndex)] || null;
+    if (!item || !item.relId) {
+      return false;
+    }
+    sendToOverlay({
+      type: "REL_SELECT_BY_REL_ID",
+      payload: {
+        relId: item.relId,
+        source: "navigator",
+      },
+    });
+    closeNavigatorOverlay();
+    return true;
+  }
+
+  function buildNavigatorIndexFromTree(items) {
+    const model = buildTreeModel(items);
+    const byRelId = {};
+    for (const item of model) {
+      byRelId[item.relId] = item;
+    }
+
+    const result = [];
+    for (const item of model) {
+      const label = formatTreeLabel(item);
+      const pathHint = buildNavigatorPathHint(item, byRelId);
+      const rawClass = String(item.className || "").trim();
+      const rawId = String(item.id || "").trim();
+      const textPreview = String(item.textPreview || "").trim();
+      const searchIndex = [
+        item.tagName,
+        rawId,
+        rawId ? `#${rawId}` : "",
+        rawClass,
+        rawClass ? `.${rawClass.split(/\s+/).join(".")}` : "",
+        label,
+        pathHint,
+        textPreview,
+      ].join(" ").toLowerCase();
+
+      result.push({
+        relId: item.relId,
+        label,
+        pathHint,
+        searchIndex,
+      });
+    }
+    return result;
+  }
+
+  function buildNavigatorPathHint(item, byRelId) {
+    const safeItem = item && typeof item === "object" ? item : null;
+    if (!safeItem || !safeItem.relId) {
+      return "";
+    }
+    const segments = [];
+    let cursor = safeItem;
+    while (cursor) {
+      const classToken = String(cursor.className || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+      const idToken = String(cursor.id || "").trim();
+      let segment = String(cursor.tagName || "").trim().toLowerCase() || "div";
+      if (idToken) {
+        segment += `#${idToken}`;
+      } else if (classToken) {
+        segment += `.${classToken}`;
+      }
+      segments.unshift(segment);
+      const parentRelId = String(cursor.parentRelId || "").trim();
+      cursor = parentRelId ? (byRelId[parentRelId] || null) : null;
+    }
+    return trimMiddle(segments.join(" > "), NAVIGATOR_PATH_HINT_MAX_LEN);
+  }
+
+  function trimMiddle(text, maxLength) {
+    const source = String(text || "");
+    const limit = Math.max(0, Number(maxLength) || 0);
+    if (!source || limit <= 0 || source.length <= limit) {
+      return source;
+    }
+    if (limit <= 3) {
+      return source.slice(0, limit);
+    }
+    const head = Math.floor((limit - 3) / 2);
+    const tail = limit - 3 - head;
+    return `${source.slice(0, head)}...${source.slice(source.length - tail)}`;
+  }
+
   function bindEvents() {
     window.addEventListener("message", onMessageFromOverlay);
     window.addEventListener("keydown", onEditorKeyDown, true);
@@ -1231,6 +1709,20 @@
 
   function onEditorKeyDown(event) {
     const key = event.key;
+    if (isNavigatorShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleNavigatorOverlay();
+      return;
+    }
+
+    if (state.navigator.visible) {
+      if (handleNavigatorKeyDown(event)) {
+        return;
+      }
+      return;
+    }
+
     if (key === "Escape") {
       const closed = hideTreeContextMenu();
       if (closed) {
@@ -1262,10 +1754,17 @@
   }
 
   function onEditorPointerDown(event) {
+    const target = event.target;
+    if (state.navigator.visible) {
+      const inNavigator = target instanceof Element && target.closest(".rel-navigator-modal");
+      if (!inNavigator) {
+        closeNavigatorOverlay();
+      }
+    }
+
     if (!state.treeContextMenu.visible) {
       return;
     }
-    const target = event.target;
     if (target instanceof Element && target.closest(".tree-context-menu")) {
       return;
     }
@@ -3279,6 +3778,7 @@
     dom.projectTypeSelect.value = state.projectType;
     dom.indexPathInput.value = data.index_path;
     dom.devUrlInput.value = state.devUrl;
+    resetNavigatorState();
     clearExportReport();
     renderViteStatus();
     ensureViteStatusSocket();
@@ -3336,6 +3836,7 @@
     state.treeUi.parentByRelId = {};
     state.treeUi.nodeByRelId = {};
     state.treeUi.query = "";
+    resetNavigatorState();
     hideTreeContextMenu();
     clearTreeDropIndicator();
     clearTreeDragState();
@@ -4064,6 +4565,15 @@
       const query = dom.treeSearchInput.value.trim().toLowerCase();
       state.treeUi.query = query;
       renderTree(state.lastTreeSnapshot, query);
+      if (state.navigator.visible) {
+        refreshNavigatorIndex();
+        applyNavigatorFilter(state.navigator.query, { keepActive: true });
+      }
+      return;
+    }
+
+    if (msg.type === "REL_TOGGLE_NAVIGATOR") {
+      toggleNavigatorOverlay();
       return;
     }
 
@@ -4999,6 +5509,7 @@
         tagName,
         id: String(raw.id || "").trim(),
         className: String(raw.className || "").trim(),
+        textPreview: String(raw.textPreview || "").trim(),
         hasChildren,
         canContainChildren,
         canDropInside: canContainChildren && !isProtected && !isSystem,

@@ -181,6 +181,85 @@
   cursor: not-allowed;
 }
 
+.rel-hover-info-frame {
+  position: fixed;
+  z-index: 2147483597;
+  pointer-events: none;
+  border: 1px solid #ff8e2f;
+  box-shadow: 0 0 0 1px rgba(255, 142, 47, 0.25);
+}
+
+.rel-hover-info-frame.hidden {
+  display: none !important;
+}
+
+.rel-hover-info-label {
+  position: fixed;
+  z-index: 2147483598;
+  pointer-events: none;
+  max-width: min(80vw, 360px);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(25, 20, 15, 0.92);
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(8, 6, 4, 0.35);
+  font: 11px/1.25 "Segoe UI", Arial, sans-serif;
+  padding: 5px 7px;
+}
+
+.rel-hover-info-label.hidden {
+  display: none !important;
+}
+
+.rel-hover-info-main {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rel-hover-info-meta {
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.rel-hover-info-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.rel-hover-info-badges.hidden {
+  display: none !important;
+}
+
+.rel-hover-info-badge {
+  display: inline-block;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff5e7;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.rel-navigator-flash {
+  outline: 3px solid rgba(255, 176, 95, 0.9) !important;
+  outline-offset: 2px !important;
+  animation: rel-navigator-flash-outline 600ms ease-out 1;
+}
+
+@keyframes rel-navigator-flash-outline {
+  from {
+    outline-color: rgba(255, 176, 95, 0.95);
+  }
+  to {
+    outline-color: rgba(255, 176, 95, 0);
+  }
+}
+
 .rel-resize-overlay {
   position: fixed;
   z-index: 2147483600;

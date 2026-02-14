@@ -157,6 +157,10 @@
   ];
   const QUICK_TOOLBAR_VIEWPORT_GAP_PX = 8;
   const QUICK_TOOLBAR_DEFAULT_OFFSET_PX = 10;
+  const NAVIGATOR_FLASH_MS = 600;
+  const HOVER_INFO_VIEWPORT_GAP_PX = 6;
+  const HOVER_INFO_LABEL_GAP_PX = 6;
+  const HOVER_INFO_ZERO_EPSILON = 0.5;
   const IMPORTANT_STYLE_PROPS = new Set([
     "background",
     "background-color",
@@ -244,9 +248,23 @@
       targetRelId: "",
       targetFallbackSelector: "",
     },
+    hoverInfo: {
+      frame: null,
+      label: null,
+      labelMain: null,
+      labelMeta: null,
+      badges: null,
+      visible: false,
+      pendingElement: null,
+      rafId: 0,
+      cachedElement: null,
+      cachedData: null,
+    },
+    navigatorFlashTimer: 0,
   };
 
   ensureResizerModuleLoaded();
+  ensureHoverInfoOverlay();
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("keydown", onDocumentKeyDown, true);
   document.addEventListener("contextmenu", onDocumentContextMenu, true);
@@ -294,6 +312,13 @@
 
   function onDocumentKeyDown(event) {
     if (!state.editMode) {
+      return;
+    }
+
+    if (isNavigatorShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      postToEditor({ type: "REL_TOGGLE_NAVIGATOR" });
       return;
     }
 
@@ -436,12 +461,14 @@
   function onDocumentMouseMove(event) {
     if (!state.editMode) {
       hideInlineAddBar();
+      scheduleHoverInfoForElement(null);
       return;
     }
     if (state.pendingDragNodeTemplate || document.body?.classList.contains("rel-resizing")) {
       hideInlineAddBar();
       hideQuickActionsToolbar({ preserveSelection: true });
       hidePreviewContextMenu();
+      scheduleHoverInfoForElement(null);
       return;
     }
 
@@ -456,6 +483,7 @@
     const target = event.target;
     if (!(target instanceof Element)) {
       hideInlineAddBar();
+      scheduleHoverInfoForElement(null);
       return;
     }
 
@@ -464,8 +492,12 @@
     }
     if (target.closest("[data-rel-runtime='overlay-ui']")) {
       hideInlineAddBar();
+      scheduleHoverInfoForElement(null);
       return;
     }
+
+    const hoverInfoTarget = resolveHoverInfoTargetElement(target);
+    scheduleHoverInfoForElement(hoverInfoTarget);
 
     const hoverElement = resolveInlineAddHoverElement(target);
     if (!hoverElement) {
@@ -497,11 +529,292 @@
 
   function onDocumentMouseLeave() {
     hideInlineAddBar();
+    scheduleHoverInfoForElement(null);
   }
 
   function onViewportAdjusted() {
     hidePreviewContextMenu();
     positionQuickActionsToolbar();
+    if (state.hoverInfo.visible && state.hoverInfo.cachedElement instanceof Element) {
+      scheduleHoverInfoForElement(state.hoverInfo.cachedElement);
+    }
+  }
+
+  function ensureHoverInfoOverlay() {
+    if (
+      state.hoverInfo.frame instanceof HTMLElement
+      && state.hoverInfo.frame.isConnected
+      && state.hoverInfo.label instanceof HTMLElement
+      && state.hoverInfo.label.isConnected
+    ) {
+      return;
+    }
+
+    const frame = document.createElement("div");
+    frame.className = "rel-hover-info-frame hidden";
+    frame.dataset.relRuntime = "hover-info";
+    frame.setAttribute("aria-hidden", "true");
+
+    const label = document.createElement("div");
+    label.className = "rel-hover-info-label hidden";
+    label.dataset.relRuntime = "hover-info";
+    label.setAttribute("aria-hidden", "true");
+
+    const main = document.createElement("div");
+    main.className = "rel-hover-info-main";
+    label.appendChild(main);
+
+    const meta = document.createElement("div");
+    meta.className = "rel-hover-info-meta";
+    label.appendChild(meta);
+
+    const badges = document.createElement("div");
+    badges.className = "rel-hover-info-badges";
+    label.appendChild(badges);
+
+    document.body.appendChild(frame);
+    document.body.appendChild(label);
+    state.hoverInfo.frame = frame;
+    state.hoverInfo.label = label;
+    state.hoverInfo.labelMain = main;
+    state.hoverInfo.labelMeta = meta;
+    state.hoverInfo.badges = badges;
+  }
+
+  function resolveHoverInfoTargetElement(rawTarget) {
+    let current = rawTarget instanceof Element ? rawTarget : null;
+    while (current) {
+      if (SKIP_TAGS.has(current.tagName)) {
+        current = current.parentElement;
+        continue;
+      }
+      if (current.tagName === "HTML" || current.tagName === "BODY") {
+        return null;
+      }
+      if (isEditorSystemElement(current)) {
+        return null;
+      }
+      return current;
+    }
+    return null;
+  }
+
+  function scheduleHoverInfoForElement(element) {
+    const nextElement = element instanceof Element ? element : null;
+    state.hoverInfo.pendingElement = nextElement;
+    if (state.hoverInfo.rafId) {
+      return;
+    }
+    state.hoverInfo.rafId = window.requestAnimationFrame(() => {
+      state.hoverInfo.rafId = 0;
+      applyHoverInfoForElement(state.hoverInfo.pendingElement);
+    });
+  }
+
+  function applyHoverInfoForElement(element) {
+    ensureHoverInfoOverlay();
+    const frame = state.hoverInfo.frame;
+    const label = state.hoverInfo.label;
+    if (!(frame instanceof HTMLElement) || !(label instanceof HTMLElement)) {
+      return;
+    }
+
+    if (!(element instanceof Element) || !element.isConnected) {
+      hideHoverInfo();
+      return;
+    }
+    if (isEditorSystemElement(element) || SKIP_TAGS.has(element.tagName) || element.tagName === "BODY") {
+      hideHoverInfo();
+      return;
+    }
+
+    const rect = element.getBoundingClientRect();
+    if (!Number.isFinite(rect.top) || rect.width <= 0 || rect.height <= 0) {
+      hideHoverInfo();
+      return;
+    }
+
+    let data = null;
+    if (state.hoverInfo.cachedElement === element && state.hoverInfo.cachedData) {
+      data = state.hoverInfo.cachedData;
+    } else {
+      data = buildHoverInfoData(element);
+      state.hoverInfo.cachedElement = element;
+      state.hoverInfo.cachedData = data;
+    }
+    if (!data) {
+      hideHoverInfo();
+      return;
+    }
+
+    renderHoverInfoLabel(data);
+    frame.classList.remove("hidden");
+    frame.setAttribute("aria-hidden", "false");
+    label.classList.remove("hidden");
+    label.setAttribute("aria-hidden", "false");
+    state.hoverInfo.visible = true;
+    positionHoverInfoOverlay(rect);
+  }
+
+  function buildHoverInfoData(element) {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+    const computed = window.getComputedStyle(element);
+    const tag = element.tagName.toLowerCase();
+    const id = String(element.id || "").trim();
+    const firstClass = String(getUserClassString(element) || "").split(/\s+/).filter(Boolean)[0] || "";
+    const selector = `${tag}${id ? `#${id}` : ""}${!id && firstClass ? `.${firstClass}` : ""}`;
+    const display = String(computed.display || "").trim() || "block";
+
+    const padding = {
+      top: parseFloat(computed.paddingTop) || 0,
+      right: parseFloat(computed.paddingRight) || 0,
+      bottom: parseFloat(computed.paddingBottom) || 0,
+      left: parseFloat(computed.paddingLeft) || 0,
+    };
+    const margin = {
+      top: parseFloat(computed.marginTop) || 0,
+      right: parseFloat(computed.marginRight) || 0,
+      bottom: parseFloat(computed.marginBottom) || 0,
+      left: parseFloat(computed.marginLeft) || 0,
+    };
+
+    return {
+      selector,
+      display,
+      padding,
+      margin,
+    };
+  }
+
+  function renderHoverInfoLabel(data) {
+    const main = state.hoverInfo.labelMain;
+    const meta = state.hoverInfo.labelMeta;
+    const badges = state.hoverInfo.badges;
+    const element = state.hoverInfo.cachedElement;
+    if (
+      !(main instanceof HTMLElement)
+      || !(meta instanceof HTMLElement)
+      || !(badges instanceof HTMLElement)
+      || !(element instanceof Element)
+    ) {
+      return;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const width = Math.max(0, Math.round(rect.width));
+    const height = Math.max(0, Math.round(rect.height));
+    main.textContent = `${data.selector} (${data.display})`;
+    meta.textContent = `W ${width} x H ${height}`;
+
+    badges.innerHTML = "";
+    const paddingBadge = createHoverBoxBadge("P", data.padding);
+    const marginBadge = createHoverBoxBadge("M", data.margin);
+    if (paddingBadge) {
+      badges.appendChild(paddingBadge);
+    }
+    if (marginBadge) {
+      badges.appendChild(marginBadge);
+    }
+    badges.classList.toggle("hidden", badges.childElementCount === 0);
+  }
+
+  function createHoverBoxBadge(prefix, box) {
+    const values = [box.top, box.right, box.bottom, box.left].map((value) => {
+      const numeric = Number(value) || 0;
+      return Math.abs(numeric) <= HOVER_INFO_ZERO_EPSILON ? 0 : numeric;
+    });
+    if (values.every((value) => value === 0)) {
+      return null;
+    }
+
+    const label = document.createElement("span");
+    label.className = "rel-hover-info-badge";
+    label.textContent = `${prefix}: ${values.map((value) => formatHoverBoxValue(value)).join("/")}`;
+    return label;
+  }
+
+  function formatHoverBoxValue(value) {
+    const rounded = Math.round(Number(value) * 10) / 10;
+    if (Number.isInteger(rounded)) {
+      return String(rounded);
+    }
+    return String(rounded).replace(/(\.\d*?[1-9])0+$/g, "$1").replace(/\.0+$/g, "");
+  }
+
+  function positionHoverInfoOverlay(rect) {
+    const frame = state.hoverInfo.frame;
+    const label = state.hoverInfo.label;
+    if (!(frame instanceof HTMLElement) || !(label instanceof HTMLElement)) {
+      return;
+    }
+
+    const left = clamp(rect.left, HOVER_INFO_VIEWPORT_GAP_PX, Math.max(HOVER_INFO_VIEWPORT_GAP_PX, window.innerWidth - HOVER_INFO_VIEWPORT_GAP_PX));
+    const top = clamp(rect.top, HOVER_INFO_VIEWPORT_GAP_PX, Math.max(HOVER_INFO_VIEWPORT_GAP_PX, window.innerHeight - HOVER_INFO_VIEWPORT_GAP_PX));
+    const width = Math.max(0, Math.round(rect.width));
+    const height = Math.max(0, Math.round(rect.height));
+    frame.style.left = `${Math.round(left)}px`;
+    frame.style.top = `${Math.round(top)}px`;
+    frame.style.width = `${width}px`;
+    frame.style.height = `${height}px`;
+
+    label.style.left = "0px";
+    label.style.top = "0px";
+    const labelRect = label.getBoundingClientRect();
+    const maxLeft = Math.max(HOVER_INFO_VIEWPORT_GAP_PX, window.innerWidth - labelRect.width - HOVER_INFO_VIEWPORT_GAP_PX);
+    const maxTop = Math.max(HOVER_INFO_VIEWPORT_GAP_PX, window.innerHeight - labelRect.height - HOVER_INFO_VIEWPORT_GAP_PX);
+    let labelLeft = clamp(rect.left, HOVER_INFO_VIEWPORT_GAP_PX, maxLeft);
+    let labelTop = rect.top - labelRect.height - HOVER_INFO_LABEL_GAP_PX;
+    if (labelTop < HOVER_INFO_VIEWPORT_GAP_PX) {
+      labelTop = rect.top + HOVER_INFO_LABEL_GAP_PX;
+    }
+    labelTop = clamp(labelTop, HOVER_INFO_VIEWPORT_GAP_PX, maxTop);
+    label.style.left = `${Math.round(labelLeft)}px`;
+    label.style.top = `${Math.round(labelTop)}px`;
+  }
+
+  function hideHoverInfo() {
+    const frame = state.hoverInfo.frame;
+    const label = state.hoverInfo.label;
+    if (frame instanceof HTMLElement) {
+      frame.classList.add("hidden");
+      frame.setAttribute("aria-hidden", "true");
+    }
+    if (label instanceof HTMLElement) {
+      label.classList.add("hidden");
+      label.setAttribute("aria-hidden", "true");
+    }
+    state.hoverInfo.visible = false;
+    state.hoverInfo.pendingElement = null;
+    state.hoverInfo.cachedElement = null;
+    state.hoverInfo.cachedData = null;
+  }
+
+  function flashNavigatorTarget(element) {
+    if (!(element instanceof Element)) {
+      return;
+    }
+    clearNavigatorFlashTimer();
+    const existing = document.querySelectorAll(".rel-navigator-flash");
+    for (const node of existing) {
+      if (node instanceof Element) {
+        node.classList.remove("rel-navigator-flash");
+      }
+    }
+    element.classList.add("rel-navigator-flash");
+    state.navigatorFlashTimer = window.setTimeout(() => {
+      state.navigatorFlashTimer = 0;
+      element.classList.remove("rel-navigator-flash");
+    }, NAVIGATOR_FLASH_MS);
+  }
+
+  function clearNavigatorFlashTimer() {
+    if (!state.navigatorFlashTimer) {
+      return;
+    }
+    clearTimeout(state.navigatorFlashTimer);
+    state.navigatorFlashTimer = 0;
   }
 
   function ensureInlineAddBar() {
@@ -1588,6 +1901,7 @@
 
     if (message.type === "REL_SELECT_BY_REL_ID") {
       const relId = message.payload && message.payload.relId;
+      const source = message.payload && message.payload.source;
       if (!relId) {
         return;
       }
@@ -1595,6 +1909,9 @@
       if (element) {
         selectElement(element);
         element.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (String(source || "").trim().toLowerCase() === "navigator") {
+          flashNavigatorTarget(element);
+        }
       }
       return;
     }
@@ -3025,6 +3342,7 @@
         tagName: el.tagName.toLowerCase(),
         id: el.id || "",
         className: getUserClassString(el),
+        textPreview: buildTreeTextPreview(el),
         hasChildren: children.length > 0,
         canContainChildren: canContainChildren(el),
         isProtected: isProtectedElement(el),
@@ -3037,6 +3355,34 @@
     }
 
     return result;
+  }
+
+  function buildTreeTextPreview(element) {
+    if (!(element instanceof Element)) {
+      return "";
+    }
+    let text = "";
+    for (const node of Array.from(element.childNodes || [])) {
+      if (!node || node.nodeType !== Node.TEXT_NODE) {
+        continue;
+      }
+      const part = String(node.textContent || "").replace(/\s+/g, " ").trim();
+      if (!part) {
+        continue;
+      }
+      text = text ? `${text} ${part}` : part;
+      if (text.length >= 60) {
+        break;
+      }
+    }
+    text = text.trim();
+    if (!text) {
+      return "";
+    }
+    if (text.length <= 60) {
+      return text;
+    }
+    return `${text.slice(0, 57)}...`;
   }
 
   function ensureRelId(element, preferredRelId) {
@@ -3163,6 +3509,20 @@
       return true;
     }
     return target.isContentEditable;
+  }
+
+  function isNavigatorShortcut(event) {
+    if (!event || typeof event !== "object") {
+      return false;
+    }
+    const key = String(event.key || "").toLowerCase();
+    if (key !== "n") {
+      return false;
+    }
+    if (event.altKey) {
+      return false;
+    }
+    return Boolean((event.ctrlKey || event.metaKey) && event.shiftKey);
   }
 
   function centerElementInParent(relId) {

@@ -54,6 +54,28 @@
   add("tab.tree", "Tree Tab", "Shows DOM tree snapshot and selection controls.", ["Tab button"], ["search and click nodes"]);
   add("tab.add", "Add Tab", "Contains draggable components.", ["Tab button"], ["drag Section, Card"]);
   add("tab.theme", "Theme Tab", "Manages palettes and font presets.", ["Tab button"], ["apply theme tokens"]);
+  add(
+    "navigator.search",
+    "Navigator Search",
+    "Quick finder for elements. Opens with Ctrl+Shift+N (or Cmd+Shift+N), supports keyboard navigation, and selects on Enter.",
+    ["Free text: tag, #id, .class, text"],
+    ["section", "#hero", ".card", "cta"],
+    ["ArrowUp/ArrowDown to navigate, Enter to select, Esc to close."]
+  );
+  add(
+    "navigator.close",
+    "Close Navigator",
+    "Closes the floating navigator overlay.",
+    ["Button action", "Esc"],
+    ["Click X", "Press Esc"]
+  );
+  add(
+    "navigator.result",
+    "Navigator Result",
+    "Selects the listed element in preview and centers it in view.",
+    ["Button action", "Enter on highlighted row"],
+    ["Select section.hero", "Select div.card"]
+  );
 
   add("tree.search", "Tree Search", "Filters tree nodes by tag, id, and class.", ["Free text"], ["header", "#hero", ".card"]);
   add("tree.refresh", "Refresh Tree", "Requests a fresh tree snapshot from overlay.", ["Button action"], ["refresh after DOM updates"]);

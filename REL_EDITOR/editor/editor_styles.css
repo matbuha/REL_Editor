@@ -915,6 +915,136 @@ button:hover {
   margin-left: 6px;
 }
 
+.rel-navigator-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20040;
+  background: rgba(35, 28, 20, 0.26);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.rel-navigator-modal {
+  width: min(640px, calc(100vw - 40px));
+  max-height: min(70vh, 620px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #cbb59b;
+  border-radius: 12px;
+  background: #fffaf2;
+  box-shadow: 0 20px 44px rgba(24, 17, 11, 0.32);
+}
+
+.rel-navigator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #e3d4c3;
+}
+
+.rel-navigator-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #49392b;
+}
+
+.rel-navigator-close {
+  border: 1px solid #d3c2ad;
+  border-radius: 7px;
+  background: #fff;
+  color: #5a4736;
+  padding: 4px 9px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.rel-navigator-search-wrap {
+  padding: 8px 12px;
+  border-bottom: 1px solid #eadfce;
+}
+
+.rel-navigator-search {
+  width: 100%;
+  border: 1px solid #cabaa6;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #fff;
+  color: #2f261f;
+}
+
+.rel-navigator-results {
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.rel-navigator-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  padding: 7px 8px;
+  color: #2d241d;
+  font-size: 12px;
+}
+
+.rel-navigator-item:hover,
+.rel-navigator-item.active {
+  border-color: #d7b996;
+  background: #f5e7d6;
+}
+
+.rel-navigator-item-main {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, monospace;
+}
+
+.rel-navigator-item-path {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #7d6a57;
+}
+
+.rel-navigator-empty {
+  padding: 16px 12px 18px;
+  font-size: 12px;
+  color: #7a6a58;
+}
+
+.rel-navigator-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid #e8dccb;
+  font-size: 11px;
+  color: #6d5d4e;
+}
+
+.rel-navigator-footer-note {
+  color: #7d6f60;
+}
+
 .rel-tooltip {
   position: fixed;
   left: 0;
