@@ -63,6 +63,55 @@
   display: none !important;
 }
 
+.rel-empty-placeholder-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483595;
+  pointer-events: none;
+}
+
+.rel-empty-placeholder-layer.hidden {
+  display: none !important;
+}
+
+.rel-empty-placeholder {
+  position: fixed;
+  box-sizing: border-box;
+  border: 1px dashed rgba(32, 89, 146, 0.55);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(24, 56, 88, 0.96);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+  pointer-events: none;
+  padding: 4px;
+}
+
+.rel-empty-placeholder-main {
+  font: 11px/1.2 "Segoe UI", Arial, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.rel-empty-placeholder-sub {
+  font: 10px/1.2 "Segoe UI", Arial, sans-serif;
+  opacity: 0.78;
+}
+
+.rel-empty-placeholder.is-compact .rel-empty-placeholder-sub {
+  display: none !important;
+}
+
+.rel-empty-placeholder.is-drop-target {
+  border-color: rgba(20, 118, 214, 0.9);
+  background: rgba(31, 127, 224, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(28, 97, 168, 0.28);
+}
+
 .rel-inline-add-bar {
   position: fixed;
   z-index: 2147483602;

@@ -274,6 +274,17 @@
     { action: "insert-container-above", label: "Insert container above", tooltipKey: "tree.context.insertContainerAbove" },
     { action: "insert-section-below", label: "Insert section below", tooltipKey: "tree.context.insertSectionBelow" },
   ];
+  const SECTION_LAYOUT_PRESETS = [
+    { key: "one-column", label: "1 column", columns: [1], tooltipKey: "add.sectionLayout.oneColumn" },
+    { key: "two-columns", label: "2 columns", columns: [1, 1], tooltipKey: "add.sectionLayout.twoColumns" },
+    { key: "three-columns", label: "3 columns", columns: [1, 1, 1], tooltipKey: "add.sectionLayout.threeColumns" },
+    { key: "fifty-fifty", label: "50/50", columns: [1, 1], tooltipKey: "add.sectionLayout.fiftyFifty" },
+    { key: "thirtythree-sixtysix", label: "33/66", columns: [1, 2], tooltipKey: "add.sectionLayout.thirtyThreeSixtySix" },
+  ];
+  const SECTION_LAYOUT_PRESET_BY_KEY = SECTION_LAYOUT_PRESETS.reduce((acc, item) => {
+    acc[item.key] = item;
+    return acc;
+  }, {});
 
   const state = {
     projectRoot: "",
@@ -395,6 +406,15 @@
       index: [],
       filtered: [],
       activeIndex: -1,
+    },
+    sectionLayout: {
+      root: null,
+      modal: null,
+      closeBtn: null,
+      presetButtons: [],
+      visible: false,
+      pendingInsertion: null,
+      pendingSource: "",
     },
     controls: {
       styleInputs: {},
@@ -1489,6 +1509,209 @@
     tooltip.setAttribute("aria-hidden", "true");
   }
 
+  function normalizeSectionInsertionContext(value) {
+    const raw = value && typeof value === "object" ? value : {};
+    const normalizedPosition = String(raw.position || "").trim().toLowerCase();
+    const position = normalizedPosition === "before" || normalizedPosition === "after" || normalizedPosition === "inside"
+      ? normalizedPosition
+      : "append";
+    return {
+      position,
+      parentRelId: String(raw.parentRelId || "").trim(),
+      targetRelId: String(raw.targetRelId || "").trim(),
+      targetFallbackSelector: String(raw.targetFallbackSelector || "").trim(),
+    };
+  }
+
+  function ensureSectionLayoutModal() {
+    if (state.sectionLayout.root && state.sectionLayout.root.isConnected) {
+      return state.sectionLayout.root;
+    }
+
+    const root = document.createElement("div");
+    root.className = "rel-section-layout-backdrop hidden";
+    root.setAttribute("aria-hidden", "true");
+
+    const modal = document.createElement("div");
+    modal.className = "rel-section-layout-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "Choose section layout");
+    root.appendChild(modal);
+
+    const header = document.createElement("div");
+    header.className = "rel-section-layout-header";
+    modal.appendChild(header);
+
+    const title = document.createElement("div");
+    title.className = "rel-section-layout-title";
+    title.textContent = "Choose section layout";
+    header.appendChild(title);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "rel-section-layout-close";
+    closeBtn.textContent = "Cancel";
+    setTooltipKey(closeBtn, "add.sectionLayout.close");
+    header.appendChild(closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "rel-section-layout-body";
+    modal.appendChild(body);
+
+    const list = document.createElement("div");
+    list.className = "rel-section-layout-grid";
+    body.appendChild(list);
+
+    const buttons = [];
+    for (const preset of SECTION_LAYOUT_PRESETS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "rel-section-layout-option";
+      button.dataset.sectionPreset = preset.key;
+      button.textContent = preset.label;
+      setTooltipKey(button, preset.tooltipKey);
+      list.appendChild(button);
+      buttons.push(button);
+    }
+
+    root.addEventListener("pointerdown", (event) => {
+      if (event.target === root) {
+        closeSectionLayoutModal();
+      }
+    });
+
+    closeBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeSectionLayoutModal();
+    });
+
+    list.addEventListener("click", (event) => {
+      const target = event.target;
+      const button = target instanceof Element
+        ? target.closest(".rel-section-layout-option")
+        : null;
+      if (!(button instanceof HTMLButtonElement) || button.disabled) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      handleSectionLayoutPresetSelect(button.dataset.sectionPreset || "");
+    });
+
+    document.body.appendChild(root);
+    state.sectionLayout.root = root;
+    state.sectionLayout.modal = modal;
+    state.sectionLayout.closeBtn = closeBtn;
+    state.sectionLayout.presetButtons = buttons;
+    return root;
+  }
+
+  function openSectionLayoutModal(request) {
+    const safeRequest = request && typeof request === "object" ? request : {};
+    const insertion = normalizeSectionInsertionContext(safeRequest.insertion);
+    const source = String(safeRequest.source || "").trim().toLowerCase() || "add-panel";
+    state.sectionLayout.pendingInsertion = insertion;
+    state.sectionLayout.pendingSource = source;
+    hideTreeContextMenu();
+    closeNavigatorOverlay();
+
+    const root = ensureSectionLayoutModal();
+    root.classList.remove("hidden");
+    root.setAttribute("aria-hidden", "false");
+    state.sectionLayout.visible = true;
+    const firstBtn = state.sectionLayout.presetButtons[0];
+    if (firstBtn instanceof HTMLButtonElement) {
+      firstBtn.focus();
+    }
+    scheduleTooltipCoverageCheck();
+    setStatus("Choose section layout");
+  }
+
+  function closeSectionLayoutModal() {
+    const root = state.sectionLayout.root;
+    const wasVisible = Boolean(state.sectionLayout.visible);
+    if (root instanceof HTMLElement) {
+      root.classList.add("hidden");
+      root.setAttribute("aria-hidden", "true");
+    }
+    state.sectionLayout.visible = false;
+    state.sectionLayout.pendingInsertion = null;
+    state.sectionLayout.pendingSource = "";
+    return wasVisible;
+  }
+
+  function handleSectionLayoutPresetSelect(rawPresetKey) {
+    const presetKey = String(rawPresetKey || "").trim();
+    const preset = SECTION_LAYOUT_PRESET_BY_KEY[presetKey] || SECTION_LAYOUT_PRESET_BY_KEY["one-column"];
+    const insertion = normalizeSectionInsertionContext(state.sectionLayout.pendingInsertion || {});
+    const source = String(state.sectionLayout.pendingSource || "").trim().toLowerCase() || "add-panel";
+    closeSectionLayoutModal();
+    insertSectionWithPreset(insertion, preset.key, source);
+  }
+
+  function sendAddNodeToOverlay(node, selectAfterCreate) {
+    sendToOverlay({
+      type: "REL_ADD_NODE",
+      payload: {
+        node,
+        selectAfterCreate: Boolean(selectAfterCreate),
+      },
+    });
+  }
+
+  function insertSectionWithPreset(insertion, rawPresetKey, source) {
+    const preset = SECTION_LAYOUT_PRESET_BY_KEY[String(rawPresetKey || "").trim()] || SECTION_LAYOUT_PRESET_BY_KEY["one-column"];
+    const safeInsertion = normalizeSectionInsertionContext(insertion);
+    const sectionRelId = generateId("rel-added");
+    const sectionNode = {
+      nodeId: generateId("node"),
+      relId: sectionRelId,
+      type: "section",
+      position: safeInsertion.position,
+      parentRelId: safeInsertion.parentRelId,
+      targetRelId: safeInsertion.targetRelId,
+      targetFallbackSelector: safeInsertion.targetFallbackSelector,
+      props: {},
+    };
+    sendAddNodeToOverlay(sectionNode, true);
+
+    const columnWeights = Array.isArray(preset.columns) && preset.columns.length > 0
+      ? preset.columns
+      : [1];
+    const containerRelIds = [];
+    for (const weight of columnWeights) {
+      const containerRelId = generateId("rel-added");
+      containerRelIds.push({ relId: containerRelId, weight: Number(weight) > 0 ? Number(weight) : 1 });
+      sendAddNodeToOverlay({
+        nodeId: generateId("node"),
+        relId: containerRelId,
+        type: "container",
+        position: "append",
+        parentRelId: sectionRelId,
+        targetRelId: "",
+        targetFallbackSelector: "",
+        props: { text: "" },
+      }, false);
+    }
+
+    if (columnWeights.length > 1) {
+      applyStyleForRelId(sectionRelId, "display", "flex");
+      applyStyleForRelId(sectionRelId, "flex-direction", "row");
+    }
+    for (const entry of containerRelIds) {
+      if (columnWeights.length === 1) {
+        applyStyleForRelId(entry.relId, "width", "100%");
+      } else {
+        applyStyleForRelId(entry.relId, "flex", String(entry.weight));
+      }
+    }
+
+    const sourceLabel = source === "inline-add" ? "inline add" : "Add panel";
+    setStatus(`${sourceLabel}: section created (${preset.label})`);
+  }
+
   function ensureNavigatorOverlay() {
     if (state.navigator.root && state.navigator.root.isConnected) {
       return state.navigator.root;
@@ -2152,6 +2375,15 @@
 
   function onEditorKeyDown(event) {
     const key = event.key;
+    if (state.sectionLayout.visible) {
+      if (key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeSectionLayoutModal();
+      }
+      return;
+    }
+
     if (isNavigatorShortcut(event)) {
       event.preventDefault();
       event.stopPropagation();
@@ -4216,6 +4448,15 @@
         if (dragging) {
           return;
         }
+        if (component.type === "section") {
+          openSectionLayoutModal({
+            source: "add-panel",
+            insertion: {
+              position: "append",
+            },
+          });
+          return;
+        }
         sendToOverlay({
           type: "REL_ADD_NODE",
           payload: {
@@ -5062,6 +5303,11 @@
       state.lastSelection = null;
       hideTreeContextMenu();
       clearSelectionUi();
+      return;
+    }
+
+    if (msg.type === "REL_OPEN_SECTION_LAYOUT_MODAL") {
+      openSectionLayoutModal(msg.payload || {});
       return;
     }
 

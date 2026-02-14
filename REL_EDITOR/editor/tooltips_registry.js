@@ -171,6 +171,55 @@
   ].forEach(([type, label]) => {
     add(`add.${type}`, `Add ${label}`, `Draggable ${label.toLowerCase()} component. You can also click to add using current target context.`, ["Drag and drop", "Click to add"], [`Drop ${label} into container`]);
   });
+  add(
+    "add.section",
+    "Add Section",
+    "Drag to insert immediately, or click to choose a layout preset first.",
+    ["Drag and drop", "Click to open layout presets"],
+    ["Drop Section into preview", "Click Section then choose 2 columns"]
+  );
+  add(
+    "add.sectionLayout.close",
+    "Close Layout Picker",
+    "Closes the section layout preset dialog without creating a section.",
+    ["Button action", "Esc"],
+    ["Click Cancel", "Press Esc"]
+  );
+  add(
+    "add.sectionLayout.oneColumn",
+    "1 Column Preset",
+    "Creates a section with 1 container (100%).",
+    ["Preset option"],
+    ["Single full-width container"]
+  );
+  add(
+    "add.sectionLayout.twoColumns",
+    "2 Columns Preset",
+    "Creates a section with 2 containers (50/50).",
+    ["Preset option"],
+    ["Two equal containers"]
+  );
+  add(
+    "add.sectionLayout.threeColumns",
+    "3 Columns Preset",
+    "Creates a section with 3 equal containers.",
+    ["Preset option"],
+    ["Three equal containers"]
+  );
+  add(
+    "add.sectionLayout.fiftyFifty",
+    "50/50 Preset",
+    "Creates a section with 2 containers (50/50).",
+    ["Preset option"],
+    ["Two equal containers"]
+  );
+  add(
+    "add.sectionLayout.thirtyThreeSixtySix",
+    "33/66 Preset",
+    "Creates a section with 2 containers (33/66).",
+    ["Preset option"],
+    ["Left 1fr, right 2fr"]
+  );
 
   add("inspector.attr.id", "ID", "Sets element id attribute.", ["HTML id token"], ["main-title"]);
   add("inspector.attr.class", "Class", "Sets class attribute; separate multiple classes by spaces.", ["Class tokens"], ["card highlighted"]);

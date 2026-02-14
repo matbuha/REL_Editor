@@ -64,7 +64,7 @@
       type: "section",
       label: "+ Section",
       props: {},
-      tooltip: "Add a section at this edge (before/after target). Example: add a section after container.",
+      tooltip: "Add a section at this edge and choose a layout preset before insert.",
     },
     {
       type: "heading-h2",
@@ -181,6 +181,10 @@
   const DROP_INSIDE_MAX_RATIO = 0.65;
   const DROP_INDICATOR_INSET_PX = 2;
   const DROP_INDICATOR_TOOLTIP_OFFSET_PX = 10;
+  const EMPTY_PLACEHOLDER_MIN_SIZE_PX = 14;
+  const EMPTY_PLACEHOLDER_TEXT_MIN_WIDTH_PX = 112;
+  const EMPTY_PLACEHOLDER_TEXT_MIN_HEIGHT_PX = 34;
+  const EMPTY_PLACEHOLDER_CANDIDATE_SELECTOR = "section, [class*='container'], [data-rel-node-type='container'], [data-rel-node-type='section']";
   const IMPORTANT_STYLE_PROPS = new Set([
     "background",
     "background-color",
@@ -301,11 +305,18 @@
       targetRelId: "",
       targetFallbackSelector: "",
     },
+    emptyPlaceholders: {
+      root: null,
+      visibleByRelId: {},
+      rafId: 0,
+      dragInsideRelId: "",
+    },
     navigatorFlashTimer: 0,
   };
 
   ensureResizerModuleLoaded();
   ensureHoverInfoOverlay();
+  scheduleEmptyPlaceholdersRefresh();
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("keydown", onDocumentKeyDown, true);
   document.addEventListener("contextmenu", onDocumentContextMenu, true);
@@ -501,10 +512,31 @@
     };
 
     const created = ensureAddedNode(nodeDescriptor, true);
-    if (created) {
-      postToEditor({ type: "REL_NODE_ADDED", payload: { node: created } });
-      postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    if (!created) {
+      return;
     }
+
+    const createdNodes = [created];
+    if (String(nodeDescriptor.type || "").trim().toLowerCase() === "section" && created.relId) {
+      const defaultContainer = ensureAddedNode({
+        nodeId: generateNodeId(),
+        relId: generateRelId(),
+        type: "container",
+        position: "append",
+        parentRelId: created.relId,
+        targetRelId: "",
+        targetFallbackSelector: "",
+        props: { text: "" },
+      }, false);
+      if (defaultContainer) {
+        createdNodes.push(defaultContainer);
+      }
+    }
+
+    for (const node of createdNodes) {
+      postToEditor({ type: "REL_NODE_ADDED", payload: { node } });
+    }
+    postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
   }
 
   function onDocumentDragLeave(event) {
@@ -601,6 +633,7 @@
   function onViewportAdjusted() {
     hidePreviewContextMenu();
     positionQuickActionsToolbar();
+    scheduleEmptyPlaceholdersRefresh();
     if (state.hoverInfo.visible && state.hoverInfo.cachedElement instanceof Element) {
       scheduleHoverInfoForElement(state.hoverInfo.cachedElement);
     }
@@ -1274,6 +1307,22 @@
     }
     const parent = targetElement.parentElement;
     const parentRelId = parent ? ensureRelId(parent) : "";
+    if (type === "section") {
+      postToEditor({
+        type: "REL_OPEN_SECTION_LAYOUT_MODAL",
+        payload: {
+          source: "inline-add",
+          insertion: {
+            position: placement,
+            parentRelId: placement === "inside" ? targetRelId : parentRelId,
+            targetRelId,
+            targetFallbackSelector: state.inlineAdd.targetFallbackSelector || buildStableSelector(targetElement),
+          },
+        },
+      });
+      hideInlineAddBar();
+      return;
+    }
     const nodeDescriptor = {
       nodeId: generateNodeId(),
       relId: generateRelId(),
@@ -2270,7 +2319,10 @@
 
     if (message.type === "REL_ADD_NODE") {
       const payload = message.payload || {};
-      const created = ensureAddedNode(payload.node || {}, true);
+      const selectAfterCreate = Object.prototype.hasOwnProperty.call(payload, "selectAfterCreate")
+        ? Boolean(payload.selectAfterCreate)
+        : true;
+      const created = ensureAddedNode(payload.node || {}, selectAfterCreate);
       if (created) {
         postToEditor({ type: "REL_NODE_ADDED", payload: { node: created } });
         postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
@@ -2361,6 +2413,7 @@
       postToEditor({ type: "REL_SELECTION", payload: buildSelectionPayload(state.selectedElement, relId) });
     }
 
+    scheduleEmptyPlaceholdersRefresh();
     postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
   }
 
@@ -2372,6 +2425,7 @@
       state.selectedElement = null;
       notifyResizerSelectionChange(null);
     }
+    scheduleEmptyPlaceholdersRefresh();
   }
 
   function deleteNodeByReference(options) {
@@ -2591,6 +2645,7 @@
       });
       postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
     }
+    scheduleEmptyPlaceholdersRefresh();
 
     return true;
   }
@@ -2639,6 +2694,7 @@
     state.quickActions.targetElement = element;
     notifyResizerSelectionChange(element);
     showQuickActionsToolbar(element);
+    scheduleEmptyPlaceholdersRefresh();
 
     const payload = buildSelectionPayload(element, relId);
     postToEditor({ type: "REL_SELECTION", payload });
@@ -3077,6 +3133,7 @@
       const existingByNodeId = document.querySelector(`[data-rel-added-node-id="${cssEscape(node.nodeId)}"]`);
       if (existingByNodeId) {
         state.appliedAddedNodeIds.add(node.nodeId);
+        existingByNodeId.dataset.relNodeType = node.type;
         if (node.relId) {
           assignKnownRelId(existingByNodeId, node.relId);
         }
@@ -3102,6 +3159,7 @@
           existingByRelId.dataset.relAddedNodeId = node.nodeId;
           state.appliedAddedNodeIds.add(node.nodeId);
         }
+        existingByRelId.dataset.relNodeType = node.type;
         return {
           nodeId: node.nodeId || existingByRelId.dataset.relAddedNodeId || "",
           relId: node.relId,
@@ -3130,9 +3188,11 @@
     const finalRelId = ensureRelId(element, node.relId);
     const finalNodeId = node.nodeId || generateNodeId();
     element.dataset.relAddedNodeId = finalNodeId;
+    element.dataset.relNodeType = node.type;
     element.dataset.relManaged = "1";
     insertion.parent.insertBefore(element, insertion.referenceNode);
     state.appliedAddedNodeIds.add(finalNodeId);
+    scheduleEmptyPlaceholdersRefresh();
 
     if (selectAfterCreate) {
       selectElement(element);
@@ -4404,6 +4464,7 @@
     state.dropIndicator.parentRelId = String(safeIntent.parentRelId || "").trim();
     state.dropIndicator.targetRelId = String(safeIntent.targetRelId || "").trim();
     state.dropIndicator.targetFallbackSelector = String(safeIntent.targetFallbackSelector || "").trim();
+    setEmptyPlaceholderDropIntent(safeIntent);
   }
 
   function clearDragDropIndicator() {
@@ -4435,6 +4496,204 @@
     state.dropIndicator.parentRelId = "";
     state.dropIndicator.targetRelId = "";
     state.dropIndicator.targetFallbackSelector = "";
+    setEmptyPlaceholderDropIntent(null);
+  }
+
+  function setEmptyPlaceholderDropIntent(intent) {
+    const safeIntent = intent && typeof intent === "object" ? intent : null;
+    let nextRelId = "";
+    if (
+      safeIntent
+      && safeIntent.intent === "inside"
+      && safeIntent.targetElement instanceof Element
+      && isEmptyPlaceholderEligibleElement(safeIntent.targetElement)
+      && isProjectElementEmpty(safeIntent.targetElement)
+    ) {
+      nextRelId = ensureRelId(safeIntent.targetElement);
+    }
+    if (state.emptyPlaceholders.dragInsideRelId === nextRelId) {
+      return;
+    }
+    state.emptyPlaceholders.dragInsideRelId = nextRelId;
+    scheduleEmptyPlaceholdersRefresh();
+  }
+
+  function ensureEmptyPlaceholdersLayer() {
+    if (state.emptyPlaceholders.root instanceof HTMLElement && state.emptyPlaceholders.root.isConnected) {
+      return state.emptyPlaceholders.root;
+    }
+    const root = document.createElement("div");
+    root.className = "rel-empty-placeholder-layer hidden";
+    root.dataset.relRuntime = "overlay-ui";
+    root.setAttribute("aria-hidden", "true");
+    document.body.appendChild(root);
+    state.emptyPlaceholders.root = root;
+    state.emptyPlaceholders.visibleByRelId = {};
+    return root;
+  }
+
+  function createEmptyPlaceholderNode(relId) {
+    const node = document.createElement("div");
+    node.className = "rel-empty-placeholder";
+    node.dataset.relRuntime = "overlay-ui";
+    node.dataset.relEmptyRelId = relId;
+    node.setAttribute("aria-hidden", "true");
+
+    const main = document.createElement("span");
+    main.className = "rel-empty-placeholder-main";
+    main.textContent = "Drop element here";
+    node.appendChild(main);
+
+    const sub = document.createElement("span");
+    sub.className = "rel-empty-placeholder-sub";
+    sub.textContent = "or use Add panel";
+    node.appendChild(sub);
+    return node;
+  }
+
+  function scheduleEmptyPlaceholdersRefresh() {
+    if (state.emptyPlaceholders.rafId) {
+      return;
+    }
+    state.emptyPlaceholders.rafId = window.requestAnimationFrame(() => {
+      state.emptyPlaceholders.rafId = 0;
+      refreshEmptyPlaceholders();
+    });
+  }
+
+  function refreshEmptyPlaceholders() {
+    const root = ensureEmptyPlaceholdersLayer();
+    if (!(root instanceof HTMLElement) || !state.editMode) {
+      clearEmptyPlaceholders();
+      return;
+    }
+
+    const viewportWidth = Math.max(1, window.innerWidth);
+    const viewportHeight = Math.max(1, window.innerHeight);
+    const activeByRelId = {};
+    const candidates = collectEmptyPlaceholderCandidates();
+
+    for (const element of candidates) {
+      if (!(element instanceof Element) || !element.isConnected) {
+        continue;
+      }
+      if (!isEmptyPlaceholderEligibleElement(element) || !isProjectElementEmpty(element)) {
+        continue;
+      }
+
+      const rect = element.getBoundingClientRect();
+      if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) {
+        continue;
+      }
+
+      const left = clamp(rect.left, 0, viewportWidth);
+      const top = clamp(rect.top, 0, viewportHeight);
+      const right = clamp(rect.right, 0, viewportWidth);
+      const bottom = clamp(rect.bottom, 0, viewportHeight);
+      const width = Math.max(0, right - left);
+      const height = Math.max(0, bottom - top);
+      if (width < EMPTY_PLACEHOLDER_MIN_SIZE_PX || height < EMPTY_PLACEHOLDER_MIN_SIZE_PX) {
+        continue;
+      }
+
+      const relId = ensureRelId(element);
+      let marker = state.emptyPlaceholders.visibleByRelId[relId];
+      if (!(marker instanceof HTMLElement) || !marker.isConnected) {
+        marker = createEmptyPlaceholderNode(relId);
+        root.appendChild(marker);
+      }
+
+      marker.style.left = `${Math.round(left)}px`;
+      marker.style.top = `${Math.round(top)}px`;
+      marker.style.width = `${Math.round(width)}px`;
+      marker.style.height = `${Math.round(height)}px`;
+      marker.classList.toggle(
+        "is-compact",
+        width < EMPTY_PLACEHOLDER_TEXT_MIN_WIDTH_PX || height < EMPTY_PLACEHOLDER_TEXT_MIN_HEIGHT_PX
+      );
+      marker.classList.toggle("is-drop-target", relId === state.emptyPlaceholders.dragInsideRelId);
+      marker.classList.remove("hidden");
+      activeByRelId[relId] = marker;
+    }
+
+    for (const [relId, node] of Object.entries(state.emptyPlaceholders.visibleByRelId)) {
+      if (activeByRelId[relId]) {
+        continue;
+      }
+      if (node instanceof HTMLElement) {
+        node.remove();
+      }
+    }
+
+    state.emptyPlaceholders.visibleByRelId = activeByRelId;
+    const hasVisible = Object.keys(activeByRelId).length > 0;
+    root.classList.toggle("hidden", !hasVisible);
+    root.setAttribute("aria-hidden", hasVisible ? "false" : "true");
+  }
+
+  function clearEmptyPlaceholders() {
+    const root = state.emptyPlaceholders.root;
+    for (const node of Object.values(state.emptyPlaceholders.visibleByRelId)) {
+      if (node instanceof HTMLElement) {
+        node.remove();
+      }
+    }
+    state.emptyPlaceholders.visibleByRelId = {};
+    if (root instanceof HTMLElement) {
+      root.classList.add("hidden");
+      root.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function collectEmptyPlaceholderCandidates() {
+    const matches = document.querySelectorAll(EMPTY_PLACEHOLDER_CANDIDATE_SELECTOR);
+    const result = [];
+    const seen = new Set();
+    for (const item of matches) {
+      if (!(item instanceof Element) || seen.has(item)) {
+        continue;
+      }
+      seen.add(item);
+      result.push(item);
+    }
+    return result;
+  }
+
+  function isEmptyPlaceholderEligibleElement(element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+    if (element.tagName === "BODY" || isProtectedElement(element) || isEditorSystemElement(element)) {
+      return false;
+    }
+    if (!canContainChildren(element)) {
+      return false;
+    }
+    const nodeType = String(element.dataset.relNodeType || "").trim().toLowerCase();
+    if (nodeType === "container" || nodeType === "section") {
+      return true;
+    }
+    if (element.tagName === "SECTION") {
+      return true;
+    }
+    const classValue = String(element.className || "").toLowerCase();
+    return classValue.includes("container");
+  }
+
+  function isProjectElementEmpty(element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+    for (const child of Array.from(element.children || [])) {
+      if (!(child instanceof Element)) {
+        continue;
+      }
+      if (SKIP_TAGS.has(child.tagName) || isEditorSystemElement(child)) {
+        continue;
+      }
+      return false;
+    }
+    return true;
   }
 
   function blockTopNavigation() {
