@@ -15,6 +15,54 @@
   outline-offset: 2px !important;
 }
 
+.rel-drop-indicator-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483605;
+  pointer-events: none;
+}
+
+.rel-drop-indicator-layer.hidden {
+  display: none !important;
+}
+
+.rel-drop-indicator-line {
+  position: fixed;
+  height: 2px;
+  border-radius: 2px;
+  background: #1f7fe0;
+  box-shadow: 0 0 0 1px rgba(19, 63, 112, 0.2);
+  pointer-events: none;
+}
+
+.rel-drop-indicator-box {
+  position: fixed;
+  border: 2px solid rgba(28, 127, 224, 0.95);
+  background: rgba(31, 127, 224, 0.12);
+  border-radius: 4px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.rel-drop-indicator-label {
+  position: fixed;
+  max-width: min(70vw, 260px);
+  border: 1px solid rgba(21, 74, 132, 0.4);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #13406a;
+  font: 11px/1.2 "Segoe UI", Arial, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.rel-drop-indicator-line.hidden,
+.rel-drop-indicator-box.hidden,
+.rel-drop-indicator-label.hidden {
+  display: none !important;
+}
+
 .rel-inline-add-bar {
   position: fixed;
   z-index: 2147483602;

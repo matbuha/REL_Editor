@@ -174,6 +174,13 @@
   const HOVER_INFO_STRIP_TEXT_MIN_MAIN_PX = 18;
   const HOVER_INFO_STRIP_TEXT_MIN_CROSS_PX = 14;
   const HOVER_INFO_SIDES = ["top", "right", "bottom", "left"];
+  const BREAKPOINT_DESKTOP = "desktop";
+  const BREAKPOINT_TABLET = "tablet";
+  const BREAKPOINT_MOBILE = "mobile";
+  const DROP_INSIDE_MIN_RATIO = 0.35;
+  const DROP_INSIDE_MAX_RATIO = 0.65;
+  const DROP_INDICATOR_INSET_PX = 2;
+  const DROP_INDICATOR_TOOLTIP_OFFSET_PX = 10;
   const IMPORTANT_STYLE_PROPS = new Set([
     "background",
     "background-color",
@@ -215,6 +222,13 @@
     selectedElement: null,
     idCounter: 1,
     editMode: true,
+    activeBreakpoint: BREAKPOINT_DESKTOP,
+    styleBuckets: {
+      base: {},
+      [BREAKPOINT_TABLET]: {},
+      [BREAKPOINT_MOBILE]: {},
+    },
+    appliedEffectiveStyles: {},
     pendingDragNodeTemplate: null,
     activeDropTarget: null,
     elementsMap: {},
@@ -274,6 +288,18 @@
       rafId: 0,
       cachedElement: null,
       cachedData: null,
+    },
+    dropIndicator: {
+      root: null,
+      line: null,
+      box: null,
+      label: null,
+      visible: false,
+      targetElement: null,
+      intent: "",
+      parentRelId: "",
+      targetRelId: "",
+      targetFallbackSelector: "",
     },
     navigatorFlashTimer: 0,
   };
@@ -338,6 +364,13 @@
     }
 
     if (event.key === "Escape") {
+      if (state.pendingDragNodeTemplate) {
+        state.pendingDragNodeTemplate = null;
+        clearDragDropIndicator();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const closedContext = hidePreviewContextMenu();
       const closedClassForm = setQuickActionsClassMode(false);
       const closedToolbar = hideQuickActionsToolbar({
@@ -421,14 +454,18 @@
     hideQuickActionsToolbar({ preserveSelection: true });
     hidePreviewContextMenu();
 
-    const target = resolveDropTarget(event.target);
-    if (!target) {
+    const dropIntent = resolveDragDropIntent(event.target, event.clientX, event.clientY);
+    if (!dropIntent) {
+      clearDragDropIndicator();
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
-    setActiveDropTarget(target);
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    updateDragDropIndicator(dropIntent, event.clientX, event.clientY);
   }
 
   function onDocumentDrop(event) {
@@ -442,18 +479,24 @@
     event.preventDefault();
     event.stopPropagation();
 
-    const targetParent = resolveDropTarget(event.target) || resolveFallbackParent();
-    const parentRelId = ensureRelId(targetParent);
+    const dropIntent = state.dropIndicator.visible
+      ? buildDropIntentFromIndicatorState()
+      : resolveDragDropIntent(event.target, event.clientX, event.clientY);
     const nodeTemplate = state.pendingDragNodeTemplate;
     state.pendingDragNodeTemplate = null;
-    clearDropTarget();
+    clearDragDropIndicator();
+    if (!dropIntent) {
+      return;
+    }
 
     const nodeDescriptor = {
       nodeId: nodeTemplate.nodeId || generateNodeId(),
       relId: nodeTemplate.relId || "",
       type: nodeTemplate.type,
-      position: "append",
-      parentRelId,
+      position: dropIntent.intent,
+      parentRelId: dropIntent.parentRelId,
+      targetRelId: dropIntent.targetRelId,
+      targetFallbackSelector: dropIntent.targetFallbackSelector,
       props: nodeTemplate.props || {},
     };
 
@@ -468,8 +511,13 @@
     if (!state.pendingDragNodeTemplate) {
       return;
     }
-    if (event.target === document.documentElement) {
-      clearDropTarget();
+    const target = event.target;
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Element && document.documentElement.contains(nextTarget)) {
+      return;
+    }
+    if (target === document.documentElement || target === document.body) {
+      clearDragDropIndicator();
     }
   }
 
@@ -545,6 +593,9 @@
   function onDocumentMouseLeave() {
     hideInlineAddBar();
     scheduleHoverInfoForElement(null);
+    if (state.pendingDragNodeTemplate) {
+      clearDragDropIndicator();
+    }
   }
 
   function onViewportAdjusted() {
@@ -552,6 +603,9 @@
     positionQuickActionsToolbar();
     if (state.hoverInfo.visible && state.hoverInfo.cachedElement instanceof Element) {
       scheduleHoverInfoForElement(state.hoverInfo.cachedElement);
+    }
+    if (state.pendingDragNodeTemplate) {
+      clearDragDropIndicator();
     }
   }
 
@@ -2093,7 +2147,14 @@
 
     if (message.type === "REL_APPLY_STYLE") {
       const payload = message.payload || {};
-      applyStyle(payload.relId, payload.property, payload.value);
+      applyStyle(payload.relId, payload.property, payload.value, payload.breakpoint);
+      return;
+    }
+
+    if (message.type === "REL_SET_BREAKPOINT") {
+      const payload = message.payload || {};
+      state.activeBreakpoint = normalizeBreakpointKey(payload.breakpoint);
+      refreshAllEffectiveStyles();
       return;
     }
 
@@ -2186,6 +2247,7 @@
       hideInlineAddBar();
       hidePreviewContextMenu();
       hideQuickActionsToolbar({ preserveSelection: true });
+      clearDragDropIndicator();
       state.pendingDragNodeTemplate = message.payload && message.payload.nodeTemplate
         ? message.payload.nodeTemplate
         : null;
@@ -2196,7 +2258,7 @@
       state.pendingDragNodeTemplate = null;
       hideInlineAddBar();
       hidePreviewContextMenu();
-      clearDropTarget();
+      clearDragDropIndicator();
       return;
     }
 
@@ -2216,31 +2278,57 @@
     }
   }
 
+  function extractStyleBucketsFromPatchPayload(payload) {
+    const safePayload = payload && typeof payload === "object" ? payload : {};
+    const styleBuckets = safePayload.styleBuckets && typeof safePayload.styleBuckets === "object"
+      ? safePayload.styleBuckets
+      : null;
+    if (styleBuckets) {
+      return styleBuckets;
+    }
+
+    const legacyStyles = safePayload.styles && typeof safePayload.styles === "object"
+      ? safePayload.styles
+      : null;
+    if (legacyStyles) {
+      return legacyStyles;
+    }
+
+    return {
+      base: safePayload.overridesMeta || safePayload.overrides_meta || {},
+      [BREAKPOINT_TABLET]: safePayload.breakpointOverrides?.[BREAKPOINT_TABLET] || safePayload.breakpoint_overrides?.[BREAKPOINT_TABLET] || {},
+      [BREAKPOINT_MOBILE]: safePayload.breakpointOverrides?.[BREAKPOINT_MOBILE] || safePayload.breakpoint_overrides?.[BREAKPOINT_MOBILE] || {},
+    };
+  }
+
   function applyPatch(payload) {
-    state.elementsMap = payload.elementsMap || {};
+    const safePayload = payload && typeof payload === "object" ? payload : {};
+    state.elementsMap = safePayload.elementsMap || {};
     state.appliedAddedNodeIds.clear();
     state.viteBodyGlobalStyleValues = {};
     state.viteBodyGlobalStyleTouched = false;
-    applyRuntimeLibraries(payload.runtimeLibraries || state.runtimeLibraries);
-    applyRuntimeFonts(payload.runtimeFonts || state.runtimeFonts);
-    applyThemeCss(payload.themeCss || "");
+    state.styleBuckets = normalizeStyleBuckets(extractStyleBucketsFromPatchPayload(safePayload));
+    state.activeBreakpoint = normalizeBreakpointKey(safePayload.activeBreakpoint || state.activeBreakpoint);
+    applyRuntimeLibraries(safePayload.runtimeLibraries || state.runtimeLibraries);
+    applyRuntimeFonts(safePayload.runtimeFonts || state.runtimeFonts);
+    applyThemeCss(safePayload.themeCss || "");
 
-    const addedNodes = Array.isArray(payload.addedNodes) ? payload.addedNodes : [];
+    const addedNodes = Array.isArray(safePayload.addedNodes) ? safePayload.addedNodes : [];
     for (const node of addedNodes) {
       ensureAddedNode(node, false);
     }
 
-    const attributesMeta = payload.attributesMeta || {};
+    const attributesMeta = safePayload.attributesMeta || {};
     for (const relId of Object.keys(attributesMeta)) {
       applyAttributes(relId, attributesMeta[relId], { silent: true });
     }
 
-    const linksMeta = payload.linksMeta || {};
+    const linksMeta = safePayload.linksMeta || {};
     for (const relId of Object.keys(linksMeta)) {
       applyLinkSettings(relId, linksMeta[relId], { silent: true });
     }
 
-    const textOverrides = payload.textOverrides || {};
+    const textOverrides = safePayload.textOverrides || {};
     for (const relId of Object.keys(textOverrides)) {
       const entry = textOverrides[relId];
       if (!entry || typeof entry !== "object" || !Object.prototype.hasOwnProperty.call(entry, "text")) {
@@ -2249,12 +2337,12 @@
       applyTextOverride(relId, entry.text, { silent: true });
     }
 
-    const movedNodes = Array.isArray(payload.movedNodes) ? payload.movedNodes : [];
+    const movedNodes = Array.isArray(safePayload.movedNodes) ? safePayload.movedNodes : [];
     for (const moveOp of movedNodes) {
       moveNodeByReference(moveOp, { silent: true });
     }
 
-    const deletedNodes = Array.isArray(payload.deletedNodes) ? payload.deletedNodes : [];
+    const deletedNodes = Array.isArray(safePayload.deletedNodes) ? safePayload.deletedNodes : [];
     for (const node of deletedNodes) {
       deleteNodeByReference({
         relId: node && node.relId,
@@ -2266,6 +2354,7 @@
     if (IS_VITE_PROXY_MODE) {
       updateViteBodyGlobalOverrideFromBody(document.body);
     }
+    refreshAllEffectiveStyles();
 
     if (state.selectedElement) {
       const relId = ensureRelId(state.selectedElement);
@@ -2555,37 +2644,217 @@
     postToEditor({ type: "REL_SELECTION", payload });
   }
 
-  function applyStyle(relId, property, value) {
-    if (!relId || !property) {
+  function normalizeBreakpointKey(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === BREAKPOINT_TABLET) {
+      return BREAKPOINT_TABLET;
+    }
+    if (normalized === BREAKPOINT_MOBILE) {
+      return BREAKPOINT_MOBILE;
+    }
+    return BREAKPOINT_DESKTOP;
+  }
+
+  function normalizeStyleOverrideBucket(value) {
+    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const result = {};
+    for (const [relId, props] of Object.entries(raw)) {
+      const safeRelId = String(relId || "").trim();
+      if (!safeRelId) {
+        continue;
+      }
+      const safeProps = props && typeof props === "object" && !Array.isArray(props) ? props : {};
+      const normalizedProps = {};
+      for (const [property, rawValue] of Object.entries(safeProps)) {
+        const safeProperty = String(property || "").trim().toLowerCase();
+        if (!safeProperty || safeProperty.startsWith("_")) {
+          continue;
+        }
+        const normalizedValue = String(rawValue ?? "").trim();
+        if (!normalizedValue) {
+          continue;
+        }
+        normalizedProps[safeProperty] = normalizedValue;
+      }
+      if (Object.keys(normalizedProps).length > 0) {
+        result[safeRelId] = normalizedProps;
+      }
+    }
+    return result;
+  }
+
+  function normalizeStyleBuckets(value) {
+    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const base = raw.base || raw[BREAKPOINT_DESKTOP] || {};
+    const tablet = raw[BREAKPOINT_TABLET] || {};
+    const mobile = raw[BREAKPOINT_MOBILE] || {};
+    return {
+      base: normalizeStyleOverrideBucket(base),
+      [BREAKPOINT_TABLET]: normalizeStyleOverrideBucket(tablet),
+      [BREAKPOINT_MOBILE]: normalizeStyleOverrideBucket(mobile),
+    };
+  }
+
+  function getStyleBucketForBreakpoint(breakpoint, options) {
+    const normalized = normalizeBreakpointKey(breakpoint);
+    const key = normalized === BREAKPOINT_DESKTOP ? "base" : normalized;
+    if (!state.styleBuckets || typeof state.styleBuckets !== "object") {
+      state.styleBuckets = normalizeStyleBuckets({});
+    }
+    if (!state.styleBuckets[key] || typeof state.styleBuckets[key] !== "object") {
+      state.styleBuckets[key] = {};
+    }
+    if (options && options.ensure) {
+      return state.styleBuckets[key];
+    }
+    return state.styleBuckets[key] || {};
+  }
+
+  function buildEffectiveStyleOverridesForRelId(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return {};
+    }
+    const base = getStyleBucketForBreakpoint(BREAKPOINT_DESKTOP)[safeRelId] || {};
+    const activeBreakpoint = normalizeBreakpointKey(state.activeBreakpoint);
+    if (activeBreakpoint === BREAKPOINT_DESKTOP) {
+      return { ...base };
+    }
+    const local = getStyleBucketForBreakpoint(activeBreakpoint)[safeRelId] || {};
+    return {
+      ...base,
+      ...local,
+    };
+  }
+
+  function applyStyleValueToElement(element, property, value) {
+    if (!(element instanceof Element)) {
       return;
     }
-
     const safeProperty = String(property || "").trim().toLowerCase();
-    const element = findElementByRelIdOrFallback(relId, state.elementsMap);
-    if (!element) {
+    if (!safeProperty) {
       return;
     }
-
-    if (value === "") {
+    const normalizedValue = String(value ?? "");
+    if (normalizedValue.trim() === "") {
       element.style.removeProperty(safeProperty);
     } else {
       const priority = IMPORTANT_STYLE_PROPS.has(safeProperty) ? "important" : "";
-      element.style.setProperty(safeProperty, value, priority);
+      element.style.setProperty(safeProperty, normalizedValue, priority);
     }
 
     if (IS_VITE_PROXY_MODE && element.tagName === "BODY" && VITE_GLOBAL_STYLE_PROPS.includes(safeProperty)) {
-      trackViteBodyGlobalStyleValue(safeProperty, value);
+      trackViteBodyGlobalStyleValue(safeProperty, normalizedValue);
       updateViteBodyGlobalOverrideFromBody(element);
     }
-
     if (IS_VITE_PROXY_MODE) {
       scheduleViteHeadOrderEnsure();
     }
+  }
 
-    if (state.selectedElement === element) {
-      const payload = buildSelectionPayload(element, relId);
+  function refreshEffectiveStylesForRelId(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+    const previous = state.appliedEffectiveStyles && typeof state.appliedEffectiveStyles === "object"
+      ? (state.appliedEffectiveStyles[safeRelId] || {})
+      : {};
+    const next = buildEffectiveStyleOverridesForRelId(safeRelId);
+    const properties = new Set([...Object.keys(previous), ...Object.keys(next)]);
+    const element = findElementByRelIdOrFallback(safeRelId, state.elementsMap);
+    for (const property of properties) {
+      const nextValue = String(next[property] ?? "");
+      const prevValue = String(previous[property] ?? "");
+      if (nextValue === prevValue) {
+        continue;
+      }
+      applyStyleValueToElement(element, property, nextValue);
+    }
+
+    if (!state.appliedEffectiveStyles || typeof state.appliedEffectiveStyles !== "object") {
+      state.appliedEffectiveStyles = {};
+    }
+    if (Object.keys(next).length > 0) {
+      state.appliedEffectiveStyles[safeRelId] = next;
+    } else {
+      delete state.appliedEffectiveStyles[safeRelId];
+    }
+
+    if (state.selectedElement === element && element instanceof Element) {
+      const payload = buildSelectionPayload(element, safeRelId);
       postToEditor({ type: "REL_SELECTION", payload });
     }
+  }
+
+  function refreshAllEffectiveStyles() {
+    const previousApplied = state.appliedEffectiveStyles && typeof state.appliedEffectiveStyles === "object"
+      ? state.appliedEffectiveStyles
+      : {};
+    const nextApplied = {};
+    const activeBucket = getStyleBucketForBreakpoint(state.activeBreakpoint);
+    const allRelIds = new Set([
+      ...Object.keys(previousApplied),
+      ...Object.keys(getStyleBucketForBreakpoint(BREAKPOINT_DESKTOP)),
+      ...Object.keys(activeBucket),
+    ]);
+
+    for (const relId of allRelIds) {
+      const safeRelId = String(relId || "").trim();
+      if (!safeRelId) {
+        continue;
+      }
+      const prev = previousApplied[safeRelId] || {};
+      const next = buildEffectiveStyleOverridesForRelId(safeRelId);
+      const properties = new Set([...Object.keys(prev), ...Object.keys(next)]);
+      const element = findElementByRelIdOrFallback(safeRelId, state.elementsMap);
+      for (const property of properties) {
+        const nextValue = String(next[property] ?? "");
+        const prevValue = String(prev[property] ?? "");
+        if (nextValue === prevValue) {
+          continue;
+        }
+        applyStyleValueToElement(element, property, nextValue);
+      }
+      if (Object.keys(next).length > 0) {
+        nextApplied[safeRelId] = next;
+      }
+    }
+
+    state.appliedEffectiveStyles = nextApplied;
+
+    if (state.selectedElement instanceof Element) {
+      const relId = ensureRelId(state.selectedElement);
+      const payload = buildSelectionPayload(state.selectedElement, relId);
+      postToEditor({ type: "REL_SELECTION", payload });
+    }
+  }
+
+  function applyStyle(relId, property, value, breakpoint) {
+    const safeRelId = String(relId || "").trim();
+    const safeProperty = String(property || "").trim().toLowerCase();
+    if (!safeRelId || !safeProperty || safeProperty.startsWith("_")) {
+      return;
+    }
+
+    const safeBreakpoint = normalizeBreakpointKey(breakpoint);
+    const bucket = getStyleBucketForBreakpoint(safeBreakpoint, { ensure: true });
+    if (!bucket[safeRelId]) {
+      bucket[safeRelId] = {};
+    }
+
+    const normalizedValue = String(value ?? "").trim();
+    if (normalizedValue) {
+      bucket[safeRelId][safeProperty] = normalizedValue;
+    } else {
+      delete bucket[safeRelId][safeProperty];
+    }
+
+    if (Object.keys(bucket[safeRelId]).length === 0) {
+      delete bucket[safeRelId];
+    }
+
+    refreshEffectiveStylesForRelId(safeRelId);
   }
 
   function applyAttributes(relId, attributes, options) {
@@ -3706,21 +3975,115 @@
     }
   }
 
-  function resolveDropTarget(rawTarget) {
-    const element = rawTarget instanceof Element ? rawTarget : null;
-    if (!element) {
-      return resolveFallbackParent();
-    }
-
-    let current = element;
+  function resolveDropIntentTargetElement(rawTarget) {
+    let current = rawTarget instanceof Element ? rawTarget : null;
     while (current) {
-      if (canContainChildren(current) && !SKIP_TAGS.has(current.tagName)) {
-        return current;
+      if (SKIP_TAGS.has(current.tagName) || isEditorSystemElement(current)) {
+        current = current.parentElement;
+        continue;
       }
-      current = current.parentElement;
+      if (current.tagName === "BODY") {
+        return resolveRootDropContainer();
+      }
+      if (isProtectedElement(current)) {
+        current = current.parentElement;
+        continue;
+      }
+      return current;
+    }
+    return resolveRootDropContainer();
+  }
+
+  function resolveRootDropContainer() {
+    if (
+      state.selectedElement instanceof Element
+      && state.selectedElement.tagName !== "BODY"
+      && !isProtectedElement(state.selectedElement)
+      && !isEditorSystemElement(state.selectedElement)
+    ) {
+      return state.selectedElement;
     }
 
-    return resolveFallbackParent();
+    const body = document.body;
+    if (!(body instanceof Element)) {
+      return null;
+    }
+    for (const child of Array.from(body.children)) {
+      if (!(child instanceof Element)) {
+        continue;
+      }
+      if (SKIP_TAGS.has(child.tagName) || isEditorSystemElement(child) || isProtectedElement(child)) {
+        continue;
+      }
+      return child;
+    }
+    return null;
+  }
+
+  function buildDropIntent(targetElement, clientY) {
+    if (!(targetElement instanceof Element)) {
+      return null;
+    }
+    const rect = targetElement.getBoundingClientRect();
+    if (!Number.isFinite(rect.top) || rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    const pointerY = Number(clientY);
+    if (!Number.isFinite(pointerY)) {
+      return null;
+    }
+    const clampedY = clamp(pointerY, rect.top, rect.bottom);
+    const insideAllowed = isInlineAddEligibleElement(targetElement);
+    const insideTop = rect.top + rect.height * DROP_INSIDE_MIN_RATIO;
+    const insideBottom = rect.top + rect.height * DROP_INSIDE_MAX_RATIO;
+    let intent = clampedY < rect.top + rect.height / 2 ? "before" : "after";
+    if (insideAllowed && clampedY >= insideTop && clampedY <= insideBottom) {
+      intent = "inside";
+    }
+
+    const targetRelId = ensureRelId(targetElement);
+    const targetFallbackSelector = buildStableSelector(targetElement);
+    if (intent === "inside") {
+      return {
+        targetElement,
+        intent,
+        rect,
+        parentRelId: targetRelId,
+        targetRelId,
+        targetFallbackSelector,
+      };
+    }
+
+    const parent = targetElement.parentElement;
+    if (!(parent instanceof Element)) {
+      return null;
+    }
+    const parentRelId = parent.tagName === "BODY"
+      ? ""
+      : ensureRelId(parent);
+    return {
+      targetElement,
+      intent,
+      rect,
+      parentRelId,
+      targetRelId,
+      targetFallbackSelector,
+    };
+  }
+
+  function resolveDragDropIntent(rawTarget, clientX, clientY) {
+    const targetElement = resolveDropIntentTargetElement(rawTarget);
+    if (!(targetElement instanceof Element)) {
+      return null;
+    }
+    const intent = buildDropIntent(targetElement, clientY);
+    if (!intent) {
+      return null;
+    }
+    intent.pointerX = Number(clientX);
+    intent.pointerY = Number(clientY);
+    return intent;
   }
 
   function canContainChildren(element) {
@@ -3883,20 +4246,195 @@
     return wrapper;
   }
 
-  function setActiveDropTarget(target) {
+  function setActiveDropTargetHighlight(target) {
     if (state.activeDropTarget === target) {
       return;
     }
-    clearDropTarget();
-    state.activeDropTarget = target;
-    target.classList.add(MANAGED_DROP_CLASS);
+    clearActiveDropTargetHighlight();
+    if (target instanceof Element) {
+      state.activeDropTarget = target;
+      target.classList.add(MANAGED_DROP_CLASS);
+    }
   }
 
-  function clearDropTarget() {
+  function clearActiveDropTargetHighlight() {
     if (state.activeDropTarget) {
       state.activeDropTarget.classList.remove(MANAGED_DROP_CLASS);
       state.activeDropTarget = null;
     }
+  }
+
+  function ensureDragDropIndicator() {
+    if (state.dropIndicator.root instanceof HTMLElement && state.dropIndicator.root.isConnected) {
+      return state.dropIndicator.root;
+    }
+
+    const root = document.createElement("div");
+    root.className = "rel-drop-indicator-layer hidden";
+    root.dataset.relRuntime = "overlay-ui";
+
+    const line = document.createElement("div");
+    line.className = "rel-drop-indicator-line hidden";
+    line.dataset.relRuntime = "overlay-ui";
+
+    const box = document.createElement("div");
+    box.className = "rel-drop-indicator-box hidden";
+    box.dataset.relRuntime = "overlay-ui";
+
+    const label = document.createElement("div");
+    label.className = "rel-drop-indicator-label hidden";
+    label.dataset.relRuntime = "overlay-ui";
+
+    root.appendChild(line);
+    root.appendChild(box);
+    root.appendChild(label);
+    document.body.appendChild(root);
+
+    state.dropIndicator.root = root;
+    state.dropIndicator.line = line;
+    state.dropIndicator.box = box;
+    state.dropIndicator.label = label;
+    return root;
+  }
+
+  function buildDropIntentFromIndicatorState() {
+    if (!state.dropIndicator.visible || !(state.dropIndicator.targetElement instanceof Element)) {
+      return null;
+    }
+    return {
+      targetElement: state.dropIndicator.targetElement,
+      intent: state.dropIndicator.intent,
+      parentRelId: state.dropIndicator.parentRelId,
+      targetRelId: state.dropIndicator.targetRelId,
+      targetFallbackSelector: state.dropIndicator.targetFallbackSelector,
+    };
+  }
+
+  function getDropIntentLabel(intent) {
+    if (intent === "before") {
+      return "Drop to insert before";
+    }
+    if (intent === "after") {
+      return "Drop to insert after";
+    }
+    return "Drop to insert inside";
+  }
+
+  function updateDragDropIndicator(intent, clientX, clientY) {
+    const safeIntent = intent && typeof intent === "object" ? intent : null;
+    if (!safeIntent || !(safeIntent.targetElement instanceof Element)) {
+      clearDragDropIndicator();
+      return;
+    }
+
+    const root = ensureDragDropIndicator();
+    const line = state.dropIndicator.line;
+    const box = state.dropIndicator.box;
+    const label = state.dropIndicator.label;
+    if (!(root instanceof HTMLElement) || !(line instanceof HTMLElement) || !(box instanceof HTMLElement) || !(label instanceof HTMLElement)) {
+      return;
+    }
+
+    const rect = safeIntent.rect && typeof safeIntent.rect === "object"
+      ? safeIntent.rect
+      : safeIntent.targetElement.getBoundingClientRect();
+    if (!Number.isFinite(rect.top) || rect.width <= 0 || rect.height <= 0) {
+      clearDragDropIndicator();
+      return;
+    }
+
+    const viewportWidth = Math.max(1, window.innerWidth);
+    const viewportHeight = Math.max(1, window.innerHeight);
+    const left = clamp(rect.left + DROP_INDICATOR_INSET_PX, 0, viewportWidth);
+    const right = clamp(rect.right - DROP_INDICATOR_INSET_PX, 0, viewportWidth);
+    const top = clamp(rect.top + DROP_INDICATOR_INSET_PX, 0, viewportHeight);
+    const bottom = clamp(rect.bottom - DROP_INDICATOR_INSET_PX, 0, viewportHeight);
+    const width = Math.max(0, right - left);
+    const height = Math.max(0, bottom - top);
+
+    root.classList.remove("hidden");
+    root.setAttribute("aria-hidden", "false");
+
+    if (safeIntent.intent === "inside") {
+      line.classList.add("hidden");
+      box.classList.remove("hidden");
+      box.style.left = `${Math.round(left)}px`;
+      box.style.top = `${Math.round(top)}px`;
+      box.style.width = `${Math.round(width)}px`;
+      box.style.height = `${Math.round(height)}px`;
+      setActiveDropTargetHighlight(safeIntent.targetElement);
+    } else {
+      const y = safeIntent.intent === "before" ? top : bottom;
+      line.classList.remove("hidden");
+      line.style.left = `${Math.round(left)}px`;
+      line.style.top = `${Math.round(y)}px`;
+      line.style.width = `${Math.round(width)}px`;
+      box.classList.add("hidden");
+      clearActiveDropTargetHighlight();
+    }
+
+    const labelText = getDropIntentLabel(safeIntent.intent);
+    label.textContent = labelText;
+    label.title = labelText;
+    label.classList.remove("hidden");
+
+    label.style.left = "0px";
+    label.style.top = "0px";
+    const labelRect = label.getBoundingClientRect();
+    const labelWidth = Math.max(1, Math.round(labelRect.width || 0));
+    const labelHeight = Math.max(1, Math.round(labelRect.height || 0));
+    const pointerX = Number.isFinite(Number(clientX)) ? Number(clientX) : (left + width / 2);
+    const pointerY = Number.isFinite(Number(clientY)) ? Number(clientY) : (top + height / 2);
+    const labelLeft = clamp(
+      pointerX + DROP_INDICATOR_TOOLTIP_OFFSET_PX,
+      4,
+      Math.max(4, viewportWidth - labelWidth - 4)
+    );
+    const labelTop = clamp(
+      pointerY + DROP_INDICATOR_TOOLTIP_OFFSET_PX,
+      4,
+      Math.max(4, viewportHeight - labelHeight - 4)
+    );
+    label.style.left = `${Math.round(labelLeft)}px`;
+    label.style.top = `${Math.round(labelTop)}px`;
+
+    state.dropIndicator.visible = true;
+    state.dropIndicator.targetElement = safeIntent.targetElement;
+    state.dropIndicator.intent = safeIntent.intent;
+    state.dropIndicator.parentRelId = String(safeIntent.parentRelId || "").trim();
+    state.dropIndicator.targetRelId = String(safeIntent.targetRelId || "").trim();
+    state.dropIndicator.targetFallbackSelector = String(safeIntent.targetFallbackSelector || "").trim();
+  }
+
+  function clearDragDropIndicator() {
+    const root = state.dropIndicator.root;
+    const line = state.dropIndicator.line;
+    const box = state.dropIndicator.box;
+    const label = state.dropIndicator.label;
+
+    if (root instanceof HTMLElement) {
+      root.classList.add("hidden");
+      root.setAttribute("aria-hidden", "true");
+    }
+    if (line instanceof HTMLElement) {
+      line.classList.add("hidden");
+    }
+    if (box instanceof HTMLElement) {
+      box.classList.add("hidden");
+    }
+    if (label instanceof HTMLElement) {
+      label.classList.add("hidden");
+      label.textContent = "";
+      label.title = "";
+    }
+
+    clearActiveDropTargetHighlight();
+    state.dropIndicator.visible = false;
+    state.dropIndicator.targetElement = null;
+    state.dropIndicator.intent = "";
+    state.dropIndicator.parentRelId = "";
+    state.dropIndicator.targetRelId = "";
+    state.dropIndicator.targetFallbackSelector = "";
   }
 
   function blockTopNavigation() {

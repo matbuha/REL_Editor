@@ -186,6 +186,47 @@
   const ORDER_AUTO_POSITION_META_KEY = "_relAutoPositionForZ";
   const ORDER_AUTO_POSITION_PREV_META_KEY = "_relAutoPositionPrev";
   const STYLE_COPY_EXCLUDED_PROPS = new Set(["transform"]);
+  const BREAKPOINT_DESKTOP = "desktop";
+  const BREAKPOINT_TABLET = "tablet";
+  const BREAKPOINT_MOBILE = "mobile";
+  const BREAKPOINT_ORDER = [BREAKPOINT_DESKTOP, BREAKPOINT_TABLET, BREAKPOINT_MOBILE];
+  const BREAKPOINT_BADGE_BY_KEY = {
+    [BREAKPOINT_DESKTOP]: "D",
+    [BREAKPOINT_TABLET]: "T",
+    [BREAKPOINT_MOBILE]: "M",
+  };
+  const BREAKPOINT_PREVIEW_WIDTH_DEFAULTS = {
+    [BREAKPOINT_TABLET]: 768,
+    [BREAKPOINT_MOBILE]: 375,
+  };
+  const BREAKPOINT_MEDIA_MAX_WIDTHS = {
+    [BREAKPOINT_TABLET]: 1024,
+    [BREAKPOINT_MOBILE]: 480,
+  };
+  const BREAKPOINT_WIDTH_RANGE = {
+    min: 280,
+    max: 1400,
+  };
+  const BREAKPOINT_RESETTABLE_SECTIONS = new Set(["spacing", "typography", "background"]);
+  const BREAKPOINT_SECTION_PROPERTIES = {
+    spacing: [
+      "padding-top", "padding-right", "padding-bottom", "padding-left",
+      "margin-top", "margin-right", "margin-bottom", "margin-left",
+      "gap",
+    ],
+    typography: [
+      "font-family", "font-size", "font-weight", "line-height",
+      "letter-spacing", "text-transform", "text-decoration",
+      "align-items",
+    ],
+    background: [
+      "background", "background-color", "background-image",
+      "background-size", "background-position", "background-repeat",
+      "_relBgSolid", "_relBgGradient", "_relBgImageEnabled",
+      "_relBgImageUrl", "_relBgImageSize", "_relBgImagePosition",
+      "_relBgImageRepeat",
+    ],
+  };
   const ROOT_LIKE_LAYER_TAGS = new Set(["html", "body"]);
   const BG_META_SOLID_KEY = "_relBgSolid";
   const BG_META_GRADIENT_KEY = "_relBgGradient";
@@ -281,12 +322,23 @@
     attributeOverrides: {},
     textOverrides: {},
     overridesMeta: {},
+    breakpointOverrides: {
+      [BREAKPOINT_TABLET]: {},
+      [BREAKPOINT_MOBILE]: {},
+    },
     attributesMeta: {},
     linksMeta: {},
     addedNodes: [],
     deletedNodes: [],
     movedNodes: [],
     copiedStyles: null,
+    preview: {
+      activeBreakpoint: BREAKPOINT_DESKTOP,
+      customWidths: {
+        [BREAKPOINT_TABLET]: BREAKPOINT_PREVIEW_WIDTH_DEFAULTS[BREAKPOINT_TABLET],
+        [BREAKPOINT_MOBILE]: BREAKPOINT_PREVIEW_WIDTH_DEFAULTS[BREAKPOINT_MOBILE],
+      },
+    },
     lastSelection: null,
     lastTreeSnapshot: [],
     overlayReady: false,
@@ -387,6 +439,8 @@
       shadowInsetInput: null,
       shadowModeUpdating: false,
       shadowValueUpdating: false,
+      breakpointIndicators: {},
+      sectionResetButtons: {},
       themeColorRows: {},
       themeCustomRows: {},
     },
@@ -412,6 +466,12 @@
     savePatchBtn: document.getElementById("savePatchBtn"),
     exportSafeBtn: document.getElementById("exportSafeBtn"),
     resetLayoutBtn: document.getElementById("resetLayoutBtn"),
+    previewBreakpointSelect: document.getElementById("previewBreakpointSelect"),
+    previewWidthRow: document.getElementById("previewWidthRow"),
+    previewWidthRange: document.getElementById("previewWidthRange"),
+    previewWidthValue: document.getElementById("previewWidthValue"),
+    previewViewportWrap: document.getElementById("previewViewportWrap"),
+    previewViewport: document.getElementById("previewViewport"),
     deleteElementBtn: document.getElementById("deleteElementBtn"),
     designLibrarySelect: document.getElementById("designLibrarySelect"),
     bootstrapJsCheckbox: document.getElementById("bootstrapJsCheckbox"),
@@ -498,6 +558,8 @@
     syncLibraryControlsFromState();
     syncFontControlsFromState();
     syncThemeUiFromState();
+    syncPreviewBreakpointControls();
+    applyPreviewBreakpointToViewport();
     buildAddPanel();
     ensureViteStatusSocket();
     loadIframe();
@@ -527,6 +589,8 @@
       [dom.savePatchBtn, "top.savePatch"],
       [dom.exportSafeBtn, "top.exportSafe"],
       [dom.resetLayoutBtn, "top.resetLayout"],
+      [dom.previewBreakpointSelect, "top.previewBreakpoint"],
+      [dom.previewWidthRange, "top.previewWidth"],
       [dom.designLibrarySelect, "top.designLibrary"],
       [dom.bootstrapJsCheckbox, "top.bootstrapJs"],
       [dom.iconSetSelect, "top.iconSet"],
@@ -708,6 +772,128 @@
       return `${node.tagName.toLowerCase()}("${text}")`;
     }
     return node.tagName.toLowerCase();
+  }
+
+  function normalizeBreakpointKey(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === BREAKPOINT_TABLET) {
+      return BREAKPOINT_TABLET;
+    }
+    if (normalized === BREAKPOINT_MOBILE) {
+      return BREAKPOINT_MOBILE;
+    }
+    return BREAKPOINT_DESKTOP;
+  }
+
+  function getBreakpointLabel(key) {
+    const normalized = normalizeBreakpointKey(key);
+    if (normalized === BREAKPOINT_TABLET) {
+      return "Tablet";
+    }
+    if (normalized === BREAKPOINT_MOBILE) {
+      return "Mobile";
+    }
+    return "Desktop";
+  }
+
+  function getPreviewWidthForBreakpoint(key) {
+    const normalized = normalizeBreakpointKey(key);
+    if (normalized === BREAKPOINT_DESKTOP) {
+      return 0;
+    }
+    const rawWidth = Number(state.preview.customWidths[normalized]);
+    const fallback = BREAKPOINT_PREVIEW_WIDTH_DEFAULTS[normalized] || BREAKPOINT_PREVIEW_WIDTH_DEFAULTS[BREAKPOINT_TABLET];
+    if (!Number.isFinite(rawWidth) || rawWidth <= 0) {
+      return fallback;
+    }
+    return clamp(Math.round(rawWidth), BREAKPOINT_WIDTH_RANGE.min, BREAKPOINT_WIDTH_RANGE.max);
+  }
+
+  function syncPreviewBreakpointControls() {
+    const active = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    state.preview.activeBreakpoint = active;
+    if (dom.previewBreakpointSelect) {
+      dom.previewBreakpointSelect.value = active;
+      dom.previewBreakpointSelect.dataset.tooltipExtra = "Preview only. Does not change your project unless you edit styles in this mode.";
+    }
+
+    const supportsCustomWidth = active !== BREAKPOINT_DESKTOP;
+    if (dom.previewWidthRow) {
+      dom.previewWidthRow.classList.toggle("hidden", !supportsCustomWidth);
+    }
+    if (dom.previewWidthRange) {
+      dom.previewWidthRange.min = String(BREAKPOINT_WIDTH_RANGE.min);
+      dom.previewWidthRange.max = String(BREAKPOINT_WIDTH_RANGE.max);
+      dom.previewWidthRange.disabled = !supportsCustomWidth;
+      dom.previewWidthRange.value = String(getPreviewWidthForBreakpoint(active) || BREAKPOINT_PREVIEW_WIDTH_DEFAULTS[BREAKPOINT_TABLET]);
+      dom.previewWidthRange.dataset.tooltipExtra = "Preview only. Does not change your project unless you edit styles in this mode.";
+    }
+    if (dom.previewWidthValue) {
+      dom.previewWidthValue.textContent = supportsCustomWidth
+        ? `${getPreviewWidthForBreakpoint(active)}px`
+        : "Auto";
+    }
+  }
+
+  function applyPreviewBreakpointToViewport() {
+    const viewport = dom.previewViewport;
+    if (!(viewport instanceof HTMLElement)) {
+      return;
+    }
+    const active = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    viewport.classList.remove("mode-desktop", "mode-tablet", "mode-mobile");
+    viewport.classList.add(`mode-${active}`);
+
+    if (active === BREAKPOINT_DESKTOP) {
+      viewport.style.width = "100%";
+      viewport.style.maxWidth = "100%";
+      return;
+    }
+
+    const width = getPreviewWidthForBreakpoint(active);
+    viewport.style.width = `${width}px`;
+    viewport.style.maxWidth = `${width}px`;
+  }
+
+  function updatePreviewWidthFromControl() {
+    const active = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    if (active === BREAKPOINT_DESKTOP || !dom.previewWidthRange) {
+      return;
+    }
+
+    const parsed = Number(dom.previewWidthRange.value);
+    const normalizedWidth = clamp(
+      Number.isFinite(parsed) ? Math.round(parsed) : BREAKPOINT_PREVIEW_WIDTH_DEFAULTS[active] || BREAKPOINT_PREVIEW_WIDTH_DEFAULTS[BREAKPOINT_TABLET],
+      BREAKPOINT_WIDTH_RANGE.min,
+      BREAKPOINT_WIDTH_RANGE.max
+    );
+    state.preview.customWidths[active] = normalizedWidth;
+    syncPreviewBreakpointControls();
+    applyPreviewBreakpointToViewport();
+  }
+
+  function setActiveBreakpointMode(value, options) {
+    const next = normalizeBreakpointKey(value);
+    const opts = options && typeof options === "object" ? options : {};
+    const previous = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    state.preview.activeBreakpoint = next;
+    syncPreviewBreakpointControls();
+    applyPreviewBreakpointToViewport();
+    sendToOverlay({
+      type: "REL_SET_BREAKPOINT",
+      payload: { breakpoint: next },
+    });
+
+    if (state.selectedRelId && state.lastSelection) {
+      refreshSelectionPanelsForCurrentBreakpoint({
+        selection: state.lastSelection,
+        selectionChanged: false,
+      });
+    }
+
+    if (opts.fromUi && previous !== next) {
+      setStatus(`Preview mode: ${getBreakpointLabel(next)}`);
+    }
   }
 
   function initTreeUi() {
@@ -1029,6 +1215,123 @@
     }
   }
 
+  function createEmptyBreakpointOverrides() {
+    return {
+      [BREAKPOINT_TABLET]: {},
+      [BREAKPOINT_MOBILE]: {},
+    };
+  }
+
+  function normalizeBreakpointOverrideBucket(value) {
+    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const result = {};
+    for (const [relId, props] of Object.entries(raw)) {
+      const safeRelId = String(relId || "").trim();
+      if (!safeRelId) {
+        continue;
+      }
+      const safeProps = ensurePlainObject(props);
+      if (Object.keys(safeProps).length === 0) {
+        continue;
+      }
+      result[safeRelId] = { ...safeProps };
+    }
+    return result;
+  }
+
+  function normalizeBreakpointOverridesState(value) {
+    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+      [BREAKPOINT_TABLET]: normalizeBreakpointOverrideBucket(raw[BREAKPOINT_TABLET]),
+      [BREAKPOINT_MOBILE]: normalizeBreakpointOverrideBucket(raw[BREAKPOINT_MOBILE]),
+    };
+  }
+
+  function ensureBreakpointOverridesState() {
+    state.breakpointOverrides = normalizeBreakpointOverridesState(state.breakpointOverrides);
+    return state.breakpointOverrides;
+  }
+
+  function getStyleBucketForBreakpoint(breakpoint, options) {
+    const normalized = normalizeBreakpointKey(breakpoint);
+    const opts = options && typeof options === "object" ? options : {};
+    if (normalized === BREAKPOINT_DESKTOP) {
+      return state.overridesMeta;
+    }
+
+    const buckets = ensureBreakpointOverridesState();
+    if (!buckets[normalized]) {
+      buckets[normalized] = {};
+    }
+    if (opts.ensure) {
+      return buckets[normalized];
+    }
+    return buckets[normalized] || {};
+  }
+
+  function getActiveStyleBucket(options) {
+    return getStyleBucketForBreakpoint(state.preview.activeBreakpoint, options);
+  }
+
+  function getLocalStyleOverridesForRelId(relId, breakpoint) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return {};
+    }
+    const bucket = getStyleBucketForBreakpoint(breakpoint);
+    return ensurePlainObject(bucket[safeRelId]);
+  }
+
+  function getEffectiveStyleOverridesForRelId(relId, breakpoint) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return {};
+    }
+    const base = ensurePlainObject(state.overridesMeta[safeRelId]);
+    const normalizedBreakpoint = normalizeBreakpointKey(
+      typeof breakpoint === "string" ? breakpoint : state.preview.activeBreakpoint
+    );
+    if (normalizedBreakpoint === BREAKPOINT_DESKTOP) {
+      return { ...base };
+    }
+    const local = getLocalStyleOverridesForRelId(safeRelId, normalizedBreakpoint);
+    return {
+      ...base,
+      ...local,
+    };
+  }
+
+  function refreshSelectionPanelsForCurrentBreakpoint(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const selection = opts.selection && typeof opts.selection === "object"
+      ? opts.selection
+      : state.lastSelection;
+    const relId = String(opts.relId || state.selectedRelId || selection?.relId || "").trim();
+    if (!selection || !relId) {
+      return;
+    }
+
+    const effectiveOverrides = getEffectiveStyleOverridesForRelId(relId);
+    const localOverrides = getLocalStyleOverridesForRelId(relId, state.preview.activeBreakpoint);
+    const attrs = state.attributesMeta[relId] || {};
+    const links = state.linksMeta[relId] || {};
+    const attributeOverrides = state.attributeOverrides[relId] || {};
+    const textOverride = state.textOverrides[relId] || {};
+
+    updateSelectionInfo(selection, effectiveOverrides, attrs, links);
+    updateStyleControlValues(selection.computed || {}, effectiveOverrides, {
+      selectionChanged: Boolean(opts.selectionChanged),
+      relId,
+      selection,
+      localOverrides,
+    });
+    updateAttributesPanel(selection, attrs);
+    updateLinkPanel(selection, links, attributeOverrides);
+    updateTextPanel(selection, textOverride);
+    updateImagePanel(selection, attrs, effectiveOverrides);
+    updateDeleteButton(selection);
+  }
+
   function handlePreviewStyleAction(payload) {
     const safePayload = payload && typeof payload === "object" ? payload : {};
     const action = String(safePayload.action || "").trim().toLowerCase();
@@ -1053,12 +1356,14 @@
       return;
     }
 
-    const sourceOverrides = ensurePlainObject(state.overridesMeta[safeRelId]);
+    const activeBreakpoint = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    const sourceOverrides = getLocalStyleOverridesForRelId(safeRelId, activeBreakpoint);
     const styleOverridesObject = extractCopyableStyleOverrides(sourceOverrides);
     state.copiedStyles = {
       version: PATCH_VERSION,
       fromRelId: safeRelId,
       timestamp: Date.now(),
+      breakpoint: activeBreakpoint,
       styleOverridesObject,
     };
     setStatus("Styles copied");
@@ -1084,11 +1389,13 @@
       return;
     }
 
-    const previousOverrides = ensurePlainObject(state.overridesMeta[safeRelId]);
+    const activeBreakpoint = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    const targetBucket = getStyleBucketForBreakpoint(activeBreakpoint, { ensure: true });
+    const previousOverrides = ensurePlainObject(targetBucket[safeRelId]);
     const previousStyleKeys = Object.keys(previousOverrides)
       .map((property) => String(property || "").trim().toLowerCase())
       .filter((property) => property && !isStyleMetadataKey(property));
-    state.overridesMeta[safeRelId] = { ...nextOverrides };
+    targetBucket[safeRelId] = { ...nextOverrides };
 
     const keysToSync = new Set([...previousStyleKeys, ...Object.keys(nextOverrides)]);
     for (const property of keysToSync) {
@@ -1100,23 +1407,24 @@
         : "";
       sendToOverlay({
         type: "REL_APPLY_STYLE",
-        payload: { relId: safeRelId, property, value },
+        payload: { relId: safeRelId, property, value, breakpoint: activeBreakpoint },
       });
     }
 
     if (state.lastSelection && state.selectedRelId === safeRelId) {
       updateStyleControlValues(
         state.lastSelection.computed || {},
-        state.overridesMeta[safeRelId] || {},
+        getEffectiveStyleOverridesForRelId(safeRelId),
         {
           selectionChanged: false,
           relId: safeRelId,
           selection: state.lastSelection,
+          localOverrides: getLocalStyleOverridesForRelId(safeRelId, activeBreakpoint),
         }
       );
       updateSelectionInfo(
         state.lastSelection,
-        state.overridesMeta[safeRelId] || {},
+        getEffectiveStyleOverridesForRelId(safeRelId),
         state.attributesMeta[safeRelId] || {},
         state.linksMeta[safeRelId] || {}
       );
@@ -1679,6 +1987,17 @@
 
     dom.resetLayoutBtn.addEventListener("click", () => {
       resetLayoutWidths();
+    });
+
+    dom.previewBreakpointSelect.addEventListener("change", () => {
+      setActiveBreakpointMode(dom.previewBreakpointSelect.value, { fromUi: true });
+    });
+
+    dom.previewWidthRange.addEventListener("input", () => {
+      updatePreviewWidthFromControl();
+    });
+    dom.previewWidthRange.addEventListener("change", () => {
+      updatePreviewWidthFromControl();
     });
 
     dom.deleteElementBtn.addEventListener("click", () => {
@@ -2516,15 +2835,34 @@
     state.controls.shadowInsetInput = null;
     state.controls.shadowModeUpdating = false;
     state.controls.shadowValueUpdating = false;
+    state.controls.breakpointIndicators = {};
+    state.controls.sectionResetButtons = {};
 
     for (const section of styleSectionsSchema) {
       const sectionRoot = document.createElement("section");
       sectionRoot.className = "control-group";
       sectionRoot.setAttribute("data-control-section", section.key);
 
+      const header = document.createElement("div");
+      header.className = "control-group-header";
       const title = document.createElement("h4");
       title.textContent = section.title;
-      sectionRoot.appendChild(title);
+      header.appendChild(title);
+
+      if (BREAKPOINT_RESETTABLE_SECTIONS.has(section.key)) {
+        const resetBtn = document.createElement("button");
+        resetBtn.type = "button";
+        resetBtn.className = "control-group-reset-btn";
+        resetBtn.textContent = "Reset for this breakpoint";
+        setTooltipKey(resetBtn, "style.resetBreakpointSection");
+        resetBtn.addEventListener("click", () => {
+          resetCurrentBreakpointForSection(section.key);
+        });
+        header.appendChild(resetBtn);
+        state.controls.sectionResetButtons[section.key] = resetBtn;
+      }
+
+      sectionRoot.appendChild(header);
 
       for (const control of section.controls) {
         if (control.type === "order") {
@@ -2576,7 +2914,14 @@
     row.setAttribute("data-property", control.property);
 
     const caption = document.createElement("span");
-    caption.textContent = control.label;
+    caption.className = "control-caption";
+    const captionText = document.createElement("span");
+    captionText.textContent = control.label;
+    const indicator = document.createElement("span");
+    indicator.className = "breakpoint-indicator hidden";
+    indicator.setAttribute("aria-hidden", "true");
+    caption.appendChild(captionText);
+    caption.appendChild(indicator);
 
     const input = createSimpleControlInput(control);
     setTooltipKey(input, resolveStyleTooltipKey(control.property));
@@ -2589,6 +2934,7 @@
     row.appendChild(input);
     container.appendChild(row);
     state.controls.styleInputs[control.property] = input;
+    state.controls.breakpointIndicators[control.property] = indicator;
   }
 
   function buildLayerOrderControl(container, control) {
@@ -3215,7 +3561,7 @@
     }
 
     const relId = state.selectedRelId;
-    const overrides = state.overridesMeta[relId] || {};
+    const overrides = getEffectiveStyleOverridesForRelId(relId);
     const computed = (state.lastSelection && state.lastSelection.computed) || {};
     const effectiveDisplay = getEffectiveDisplayForVerticalAlign(overrides, computed);
 
@@ -3846,7 +4192,9 @@
       item.appendChild(name);
       item.appendChild(desc);
 
+      let dragging = false;
       item.addEventListener("dragstart", (event) => {
+        dragging = true;
         const nodeTemplate = createNodeTemplate(component);
         event.dataTransfer.effectAllowed = "copy";
         event.dataTransfer.setData("text/plain", component.type);
@@ -3859,6 +4207,22 @@
 
       item.addEventListener("dragend", () => {
         sendToOverlay({ type: "REL_CLEAR_DRAG_COMPONENT" });
+        window.setTimeout(() => {
+          dragging = false;
+        }, 0);
+      });
+
+      item.addEventListener("click", () => {
+        if (dragging) {
+          return;
+        }
+        sendToOverlay({
+          type: "REL_ADD_NODE",
+          payload: {
+            node: createNodeTemplate(component),
+          },
+        });
+        setStatus(`Added ${component.name}`);
       });
 
       container.appendChild(item);
@@ -3898,6 +4262,8 @@
     state.selectorMap = {};
     state.attributeOverrides = {};
     state.textOverrides = {};
+    state.overridesMeta = {};
+    state.breakpointOverrides = createEmptyBreakpointOverrides();
     state.copiedStyles = null;
     dom.projectRootInput.value = data.project_root;
     dom.projectTypeSelect.value = state.projectType;
@@ -3948,6 +4314,7 @@
     state.attributeOverrides = {};
     state.textOverrides = {};
     state.overridesMeta = {};
+    state.breakpointOverrides = createEmptyBreakpointOverrides();
     state.attributesMeta = {};
     state.linksMeta = {};
     state.addedNodes = [];
@@ -4432,6 +4799,7 @@
     state.attributeOverrides = normalizedPatch.attributeOverrides || {};
     state.textOverrides = normalizedPatch.textOverrides || {};
     state.overridesMeta = normalizedPatch.overridesMeta;
+    state.breakpointOverrides = normalizedPatch.breakpointOverrides;
     state.attributesMeta = normalizedPatch.attributesMeta;
     state.linksMeta = normalizedPatch.linksMeta;
     state.addedNodes = normalizedPatch.addedNodes;
@@ -4452,6 +4820,12 @@
 
   async function savePatch(options) {
     const opts = options && typeof options === "object" ? options : {};
+    const breakpointOverrides = ensureBreakpointOverridesState();
+    const styleBuckets = {
+      base: state.overridesMeta,
+      [BREAKPOINT_TABLET]: breakpointOverrides[BREAKPOINT_TABLET],
+      [BREAKPOINT_MOBILE]: breakpointOverrides[BREAKPOINT_MOBILE],
+    };
     const patch = {
       version: PATCH_VERSION,
       project_root: state.projectRoot,
@@ -4463,6 +4837,8 @@
       attributeOverrides: normalizeAttributeOverrides(state.attributeOverrides),
       textOverrides: normalizeTextOverrides(state.textOverrides),
       overridesMeta: state.overridesMeta,
+      breakpointOverrides: breakpointOverrides,
+      styles: styleBuckets,
       attributesMeta: state.attributesMeta,
       linksMeta: state.linksMeta,
       addedNodes: state.addedNodes,
@@ -4473,7 +4849,7 @@
       theme: state.theme,
     };
 
-    const overrideCss = buildOverrideCss(state.overridesMeta, state.theme, {
+    const overrideCss = buildOverrideCss(styleBuckets, state.theme, {
       projectType: state.projectType,
       selectorMap: state.selectorMap,
       elementsMap: state.elementsMap,
@@ -4530,8 +4906,10 @@
     const beforeState = ensurePlainObject(before);
     const afterState = ensurePlainObject(after);
     const phase = String(options && options.phase ? options.phase : "preview").toLowerCase();
-    if (!state.overridesMeta[safeRelId]) {
-      state.overridesMeta[safeRelId] = {};
+    const activeBreakpoint = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    const styleBucket = getStyleBucketForBreakpoint(activeBreakpoint, { ensure: true });
+    if (!styleBucket[safeRelId]) {
+      styleBucket[safeRelId] = {};
     }
 
     for (const [property, value] of Object.entries(afterState)) {
@@ -4542,14 +4920,14 @@
 
       const normalizedValue = normalizeRgbaAlphaInCssValue(String(value ?? ""));
       if (normalizedValue.trim() === "") {
-        delete state.overridesMeta[safeRelId][safeProperty];
+        delete styleBucket[safeRelId][safeProperty];
       } else {
-        state.overridesMeta[safeRelId][safeProperty] = normalizedValue;
+        styleBucket[safeRelId][safeProperty] = normalizedValue;
       }
     }
 
-    if (Object.keys(state.overridesMeta[safeRelId]).length === 0) {
-      delete state.overridesMeta[safeRelId];
+    if (Object.keys(styleBucket[safeRelId]).length === 0) {
+      delete styleBucket[safeRelId];
     }
 
     if (state.selectedRelId !== safeRelId || !state.lastSelection) {
@@ -4575,17 +4953,18 @@
 
     updateStyleControlValues(
       state.lastSelection.computed,
-      state.overridesMeta[safeRelId] || {},
+      getEffectiveStyleOverridesForRelId(safeRelId, activeBreakpoint),
       {
         selectionChanged: false,
         relId: safeRelId,
         selection: state.lastSelection,
+        localOverrides: getLocalStyleOverridesForRelId(safeRelId, activeBreakpoint),
       }
     );
 
     updateSelectionInfo(
       state.lastSelection,
-      state.overridesMeta[safeRelId] || {},
+      getEffectiveStyleOverridesForRelId(safeRelId),
       state.attributesMeta[safeRelId] || {},
       state.linksMeta[safeRelId] || {}
     );
@@ -4818,23 +5197,11 @@
       }
     }
 
-    const overrides = state.overridesMeta[payload.relId] || {};
-    const attrs = state.attributesMeta[payload.relId] || {};
-    const links = state.linksMeta[payload.relId] || {};
-    const attributeOverrides = state.attributeOverrides[payload.relId] || {};
-    const textOverride = state.textOverrides[payload.relId] || {};
-
-    updateSelectionInfo(payload, overrides, attrs, links);
-    updateStyleControlValues(payload.computed || {}, overrides, {
-      selectionChanged,
-      relId: payload.relId,
+    refreshSelectionPanelsForCurrentBreakpoint({
       selection: payload,
+      relId: payload.relId,
+      selectionChanged,
     });
-    updateAttributesPanel(payload, attrs);
-    updateLinkPanel(payload, links, attributeOverrides);
-    updateTextPanel(payload, textOverride);
-    updateImagePanel(payload, attrs, overrides);
-    updateDeleteButton(payload);
     markActiveTreeNode(payload.relId);
   }
 
@@ -4921,6 +5288,7 @@
       state.controls.shadowModeUpdating = false;
     }
 
+    updateStyleBreakpointIndicators("", {});
     markActiveTreeNode("");
   }
 
@@ -4954,6 +5322,7 @@
   function updateStyleControlValues(computed, overrides, options) {
     const safeComputed = computed && typeof computed === "object" ? computed : {};
     const safeOverrides = overrides && typeof overrides === "object" ? overrides : {};
+    const localOverrides = ensurePlainObject(options?.localOverrides);
     for (const property of Object.keys(state.controls.styleInputs || {})) {
       const input = state.controls.styleInputs[property];
       if (!input) {
@@ -5015,6 +5384,146 @@
     );
     updateVerticalAlignControlForSelection(options?.selection || state.lastSelection || {}, safeComputed, safeOverrides);
     updateShadowControlValues(safeComputed, safeOverrides, options?.selection || state.lastSelection || {}, options || {});
+    updateStyleBreakpointIndicators(relId, localOverrides);
+  }
+
+  function updateStyleBreakpointIndicators(relId, localOverrides) {
+    const active = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    const isDesktop = active === BREAKPOINT_DESKTOP;
+    const badgeLabel = BREAKPOINT_BADGE_BY_KEY[active] || "D";
+    const noteText = `This value is set for ${getBreakpointLabel(active)} only.`;
+    const safeLocalOverrides = ensurePlainObject(localOverrides);
+
+    for (const [property, indicator] of Object.entries(state.controls.breakpointIndicators || {})) {
+      const input = state.controls.styleInputs[property];
+      const hasLocalOverride = !isDesktop
+        && Object.prototype.hasOwnProperty.call(safeLocalOverrides, property)
+        && String(safeLocalOverrides[property] ?? "").trim() !== "";
+      if (indicator instanceof HTMLElement) {
+        indicator.textContent = badgeLabel;
+        indicator.classList.toggle("hidden", !hasLocalOverride);
+        indicator.setAttribute("aria-hidden", hasLocalOverride ? "false" : "true");
+      }
+      setBreakpointOnlyTooltipNote(input, hasLocalOverride, noteText);
+    }
+
+    const safeRelId = String(relId || "").trim();
+    for (const [sectionKey, button] of Object.entries(state.controls.sectionResetButtons || {})) {
+      if (!(button instanceof HTMLButtonElement)) {
+        continue;
+      }
+      const enabled = !isDesktop
+        && Boolean(safeRelId)
+        && hasBreakpointOverrideForSection(safeRelId, sectionKey, active);
+      button.disabled = !enabled;
+      button.classList.toggle("hidden", isDesktop);
+      setBreakpointOnlyTooltipNote(button, !isDesktop, noteText);
+    }
+  }
+
+  function setBreakpointOnlyTooltipNote(target, enabled, noteText) {
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const prefix = "This value is set for ";
+    const existing = String(target.dataset.tooltipExtra || "")
+      .split("|")
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .filter((item) => !item.startsWith(prefix));
+    if (enabled) {
+      existing.push(noteText);
+    }
+    if (existing.length > 0) {
+      target.dataset.tooltipExtra = existing.join("|");
+      return;
+    }
+    delete target.dataset.tooltipExtra;
+  }
+
+  function hasBreakpointOverrideForSection(relId, sectionKey, breakpoint) {
+    const safeRelId = String(relId || "").trim();
+    const normalizedBreakpoint = normalizeBreakpointKey(breakpoint);
+    if (!safeRelId || normalizedBreakpoint === BREAKPOINT_DESKTOP) {
+      return false;
+    }
+    const localOverrides = getLocalStyleOverridesForRelId(safeRelId, normalizedBreakpoint);
+    const sectionProps = BREAKPOINT_SECTION_PROPERTIES[String(sectionKey || "").trim()] || [];
+    return sectionProps.some((property) => {
+      if (!Object.prototype.hasOwnProperty.call(localOverrides, property)) {
+        return false;
+      }
+      const value = localOverrides[property];
+      if (typeof value === "string") {
+        return value.trim() !== "";
+      }
+      return value != null;
+    });
+  }
+
+  function resetCurrentBreakpointForSection(sectionKey) {
+    const active = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    if (active === BREAKPOINT_DESKTOP) {
+      setStatus("Desktop edits are stored in base styles; use clear value per field instead", true);
+      return;
+    }
+    if (!state.selectedRelId) {
+      setStatus("Select an element first", true);
+      return;
+    }
+
+    const safeSectionKey = String(sectionKey || "").trim();
+    const relId = String(state.selectedRelId || "").trim();
+    const bucket = getStyleBucketForBreakpoint(active, { ensure: true });
+    const localOverrides = ensurePlainObject(bucket[relId]);
+    const sectionProps = BREAKPOINT_SECTION_PROPERTIES[safeSectionKey] || [];
+    if (sectionProps.length === 0) {
+      return;
+    }
+
+    let changed = false;
+    for (const property of sectionProps) {
+      if (Object.prototype.hasOwnProperty.call(localOverrides, property)) {
+        delete localOverrides[property];
+        changed = true;
+      }
+    }
+    if (!changed) {
+      setStatus(`No ${safeSectionKey} overrides in ${getBreakpointLabel(active)} mode`);
+      return;
+    }
+
+    if (Object.keys(localOverrides).length === 0) {
+      delete bucket[relId];
+    } else {
+      bucket[relId] = localOverrides;
+    }
+
+    for (const property of sectionProps) {
+      if (isStyleMetadataKey(property)) {
+        continue;
+      }
+      sendToOverlay({
+        type: "REL_APPLY_STYLE",
+        payload: {
+          relId,
+          property,
+          value: "",
+          breakpoint: active,
+        },
+      });
+    }
+
+    if (state.lastSelection && state.selectedRelId === relId) {
+      refreshSelectionPanelsForCurrentBreakpoint({
+        selection: state.lastSelection,
+        relId,
+        selectionChanged: false,
+      });
+    }
+
+    const title = styleSectionsSchema.find((item) => item.key === safeSectionKey)?.title || safeSectionKey;
+    setStatus(`${title} reset for ${getBreakpointLabel(active)}`);
   }
 
   function updateAttributesPanel(selection, attrs) {
@@ -5164,44 +5673,64 @@
       return;
     }
 
+    const activeBreakpoint = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    const styleBucket = getStyleBucketForBreakpoint(activeBreakpoint, { ensure: true });
     const normalizedValue = normalizeRgbaAlphaInCssValue(String(value ?? ""));
     const trimmedValue = normalizedValue.trim();
-    if (!state.overridesMeta[safeRelId]) {
-      state.overridesMeta[safeRelId] = {};
+    if (!styleBucket[safeRelId]) {
+      styleBucket[safeRelId] = {};
     }
 
     if (trimmedValue === "") {
-      delete state.overridesMeta[safeRelId][safeProperty];
+      delete styleBucket[safeRelId][safeProperty];
     } else {
-      state.overridesMeta[safeRelId][safeProperty] = normalizedValue;
+      styleBucket[safeRelId][safeProperty] = normalizedValue;
     }
     if (safeProperty === "position" && trimmedValue.toLowerCase() !== "relative") {
-      clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY);
-      clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_PREV_META_KEY);
+      clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY, activeBreakpoint);
+      clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_PREV_META_KEY, activeBreakpoint);
     }
-    const borderBoxPayload = ensureBorderBoxOverrideForSizing(safeRelId, safeProperty, trimmedValue);
+    const borderBoxPayload = ensureBorderBoxOverrideForSizing(safeRelId, safeProperty, trimmedValue, activeBreakpoint);
 
-    if (Object.keys(state.overridesMeta[safeRelId]).length === 0) {
-      delete state.overridesMeta[safeRelId];
+    if (Object.keys(styleBucket[safeRelId]).length === 0) {
+      delete styleBucket[safeRelId];
     }
 
     sendToOverlay({
       type: "REL_APPLY_STYLE",
-      payload: { relId: safeRelId, property: safeProperty, value: trimmedValue ? normalizedValue : "" },
+      payload: {
+        relId: safeRelId,
+        property: safeProperty,
+        value: trimmedValue ? normalizedValue : "",
+        breakpoint: activeBreakpoint,
+      },
     });
     if (borderBoxPayload) {
       sendToOverlay({
         type: "REL_APPLY_STYLE",
-        payload: borderBoxPayload,
+        payload: {
+          ...borderBoxPayload,
+          breakpoint: activeBreakpoint,
+        },
       });
     }
 
     if (state.lastSelection && state.selectedRelId === safeRelId) {
       updateSelectionInfo(
         state.lastSelection,
-        state.overridesMeta[safeRelId] || {},
+        getEffectiveStyleOverridesForRelId(safeRelId),
         state.attributesMeta[safeRelId] || {},
         state.linksMeta[safeRelId] || {}
+      );
+      updateStyleControlValues(
+        state.lastSelection.computed || {},
+        getEffectiveStyleOverridesForRelId(safeRelId),
+        {
+          selectionChanged: false,
+          relId: safeRelId,
+          selection: state.lastSelection,
+          localOverrides: getLocalStyleOverridesForRelId(safeRelId, activeBreakpoint),
+        }
       );
     }
   }
@@ -5243,7 +5772,7 @@
     return false;
   }
 
-  function ensureBorderBoxOverrideForSizing(relId, property, value) {
+  function ensureBorderBoxOverrideForSizing(relId, property, value, breakpoint) {
     const safeProperty = String(property || "").trim().toLowerCase();
     if (!BORDER_BOX_TRIGGER_PROPS.has(safeProperty)) {
       return null;
@@ -5252,16 +5781,20 @@
       return null;
     }
 
-    if (!state.overridesMeta[relId]) {
-      state.overridesMeta[relId] = {};
+    const bucket = getStyleBucketForBreakpoint(
+      typeof breakpoint === "string" ? breakpoint : state.preview.activeBreakpoint,
+      { ensure: true }
+    );
+    if (!bucket[relId]) {
+      bucket[relId] = {};
     }
 
-    const existing = String(state.overridesMeta[relId]["box-sizing"] ?? "").trim().toLowerCase();
+    const existing = String(bucket[relId]["box-sizing"] ?? "").trim().toLowerCase();
     if (existing === "border-box") {
       return null;
     }
 
-    state.overridesMeta[relId]["box-sizing"] = "border-box";
+    bucket[relId]["box-sizing"] = "border-box";
     return {
       relId,
       property: "box-sizing",
@@ -5295,7 +5828,7 @@
     if (state.lastSelection) {
       updateSelectionInfo(
         state.lastSelection,
-        state.overridesMeta[relId] || {},
+        getEffectiveStyleOverridesForRelId(relId),
         state.attributesMeta[relId] || {},
         state.linksMeta[relId] || {}
       );
@@ -5344,7 +5877,7 @@
     if (state.lastSelection) {
       updateSelectionInfo(
         state.lastSelection,
-        state.overridesMeta[relId] || {},
+        getEffectiveStyleOverridesForRelId(relId),
         state.attributesMeta[relId] || {},
         state.linksMeta[relId] || {}
       );
@@ -5421,6 +5954,9 @@
 
     if (relId) {
       delete state.overridesMeta[relId];
+      const breakpointBuckets = ensureBreakpointOverridesState();
+      delete breakpointBuckets[BREAKPOINT_TABLET][relId];
+      delete breakpointBuckets[BREAKPOINT_MOBILE][relId];
       delete state.attributesMeta[relId];
       delete state.linksMeta[relId];
       delete state.selectorMap[relId];
@@ -5508,7 +6044,7 @@
     if (state.selectedRelId === relId && state.lastSelection) {
       updateSelectionInfo(
         state.lastSelection,
-        state.overridesMeta[relId] || {},
+        getEffectiveStyleOverridesForRelId(relId),
         state.attributesMeta[relId] || {},
         state.linksMeta[relId] || {}
       );
@@ -6110,6 +6646,15 @@
     return `${item.tagName}${id}${cls}`;
   }
 
+  function buildStyleBucketsPayload() {
+    const breakpointOverrides = ensureBreakpointOverridesState();
+    return {
+      base: state.overridesMeta,
+      [BREAKPOINT_TABLET]: breakpointOverrides[BREAKPOINT_TABLET],
+      [BREAKPOINT_MOBILE]: breakpointOverrides[BREAKPOINT_MOBILE],
+    };
+  }
+
   function applyPatchToOverlay() {
     if (!state.overlayReady) {
       return;
@@ -6128,21 +6673,10 @@
         runtimeLibraries: state.runtimeLibraries,
         runtimeFonts: state.runtimeFonts,
         themeCss: buildThemeCss(state.theme),
+        styleBuckets: buildStyleBucketsPayload(),
+        activeBreakpoint: normalizeBreakpointKey(state.preview.activeBreakpoint),
       },
     });
-
-    for (const relId of Object.keys(state.overridesMeta)) {
-      const props = state.overridesMeta[relId] || {};
-      for (const property of Object.keys(props)) {
-        if (isStyleMetadataKey(property)) {
-          continue;
-        }
-        sendToOverlay({
-          type: "REL_APPLY_STYLE",
-          payload: { relId, property, value: props[property] },
-        });
-      }
-    }
   }
 
   function syncLibraryControlsFromState() {
@@ -6329,18 +6863,47 @@
     return "Font family";
   }
 
-  function buildOverrideCss(overridesMeta, themeState, options) {
+  function buildOverrideCss(styleBuckets, themeState, options) {
     const opts = options && typeof options === "object" ? options : {};
+    const buckets = styleBuckets && typeof styleBuckets === "object" && !Array.isArray(styleBuckets)
+      ? styleBuckets
+      : { base: ensurePlainObject(styleBuckets) };
+    const baseBucket = ensurePlainObject(buckets.base);
+    const tabletBucket = ensurePlainObject(buckets[BREAKPOINT_TABLET]);
+    const mobileBucket = ensurePlainObject(buckets[BREAKPOINT_MOBILE]);
+
     const lines = [];
     const themeCss = String(buildThemeCss(themeState || createDefaultThemeState()) || "").trim();
     if (themeCss) {
       lines.push(themeCss);
       lines.push("");
     }
-    const relIds = Object.keys(overridesMeta).sort();
+
+    appendStyleBucketCss(lines, baseBucket, {
+      options: opts,
+      mediaMaxWidth: 0,
+    });
+    appendStyleBucketCss(lines, tabletBucket, {
+      options: opts,
+      mediaMaxWidth: BREAKPOINT_MEDIA_MAX_WIDTHS[BREAKPOINT_TABLET],
+    });
+    appendStyleBucketCss(lines, mobileBucket, {
+      options: opts,
+      mediaMaxWidth: BREAKPOINT_MEDIA_MAX_WIDTHS[BREAKPOINT_MOBILE],
+    });
+
+    return lines.join("\n");
+  }
+
+  function appendStyleBucketCss(lines, overridesMeta, options) {
+    const targetLines = [];
+    const opts = options && typeof options === "object" ? options : {};
+    const buildOptions = opts.options && typeof opts.options === "object" ? opts.options : {};
+    const mediaMaxWidth = Number(opts.mediaMaxWidth || 0);
+    const relIds = Object.keys(ensurePlainObject(overridesMeta)).sort();
 
     for (const relId of relIds) {
-      const props = overridesMeta[relId] || {};
+      const props = ensurePlainObject(overridesMeta[relId]);
       const entries = Object.entries(props)
         .filter(([property]) => !isStyleMetadataKey(property))
         .map(([property, value]) => [property, normalizeRgbaAlphaInCssValue(String(value ?? ""))])
@@ -6349,22 +6912,36 @@
         continue;
       }
 
-      lines.push(`[data-rel-id="${cssEscape(relId)}"] {`);
+      targetLines.push(`[data-rel-id="${cssEscape(relId)}"] {`);
       for (const [property, value] of entries) {
         const needsImportant = shouldUseImportantInOverride(property, value);
-        lines.push(`  ${property}: ${value}${needsImportant ? " !important" : ""};`);
+        targetLines.push(`  ${property}: ${value}${needsImportant ? " !important" : ""};`);
+      }
+      targetLines.push("}");
+      targetLines.push("");
+    }
+
+    const viteGlobalLines = buildViteGlobalOverrideBlock(overridesMeta, buildOptions);
+    if (viteGlobalLines.length > 0) {
+      targetLines.push(...viteGlobalLines);
+      targetLines.push("");
+    }
+
+    if (targetLines.length === 0) {
+      return;
+    }
+
+    if (Number.isFinite(mediaMaxWidth) && mediaMaxWidth > 0) {
+      lines.push(`@media (max-width: ${Math.round(mediaMaxWidth)}px) {`);
+      for (const line of targetLines) {
+        lines.push(line ? `  ${line}` : "");
       }
       lines.push("}");
       lines.push("");
+      return;
     }
 
-    const viteGlobalLines = buildViteGlobalOverrideBlock(overridesMeta, opts);
-    if (viteGlobalLines.length > 0) {
-      lines.push(...viteGlobalLines);
-      lines.push("");
-    }
-
-    return lines.join("\n");
+    lines.push(...targetLines);
   }
 
   function buildViteGlobalOverrideBlock(overridesMeta, options) {
@@ -6473,8 +7050,37 @@
     return typeof overrideValue === "undefined" ? fallbackValue : overrideValue;
   }
 
+  function extractStyleBucketsFromPatch(patch) {
+    const safePatch = patch && typeof patch === "object" ? patch : {};
+    const rawStyles = safePatch.styles && typeof safePatch.styles === "object"
+      ? safePatch.styles
+      : {};
+    const rawLegacyBreakpoints = safePatch.breakpointOverrides || safePatch.breakpoint_overrides || {};
+    const rawLegacyBase = ensurePlainObject(safePatch.overridesMeta || safePatch.overrides_meta);
+
+    const baseFromStyles = ensurePlainObject(rawStyles.base || rawStyles[BREAKPOINT_DESKTOP]);
+    const tabletFromStyles = ensurePlainObject(rawStyles[BREAKPOINT_TABLET]);
+    const mobileFromStyles = ensurePlainObject(rawStyles[BREAKPOINT_MOBILE]);
+
+    const base = Object.keys(baseFromStyles).length > 0 ? baseFromStyles : rawLegacyBase;
+    const breakpointOverrides = normalizeBreakpointOverridesState({
+      [BREAKPOINT_TABLET]: Object.keys(tabletFromStyles).length > 0
+        ? tabletFromStyles
+        : ensurePlainObject(rawLegacyBreakpoints[BREAKPOINT_TABLET]),
+      [BREAKPOINT_MOBILE]: Object.keys(mobileFromStyles).length > 0
+        ? mobileFromStyles
+        : ensurePlainObject(rawLegacyBreakpoints[BREAKPOINT_MOBILE]),
+    });
+
+    return {
+      base: ensurePlainObject(base),
+      breakpointOverrides,
+    };
+  }
+
   function normalizeLoadedPatch(rawPatch) {
     const patch = rawPatch && typeof rawPatch === "object" ? rawPatch : {};
+    const styles = extractStyleBucketsFromPatch(patch);
     const linksMeta = ensurePlainObject(patch.linksMeta || patch.links_meta);
     const runtimeLibraries =
       patch.runtimeLibraries ||
@@ -6505,7 +7111,8 @@
       version: Number(patch.version || 1),
       elementsMap: ensurePlainObject(patch.elementsMap || patch.elements),
       selectorMap: normalizeSelectorMap(selectorMap),
-      overridesMeta: ensurePlainObject(patch.overridesMeta || patch.overrides_meta),
+      overridesMeta: styles.base,
+      breakpointOverrides: styles.breakpointOverrides,
       attributesMeta: ensurePlainObject(patch.attributesMeta || patch.attributes_meta),
       linksMeta,
       attributeOverrides: normalizeAttributeOverrides(attributeOverrides, linksMeta),
@@ -6890,8 +7497,10 @@
       return;
     }
 
-    const overrides = ensurePlainObject(state.overridesMeta[safeRelId]);
-    const overridePosition = String(overrides.position ?? "").trim().toLowerCase();
+    const activeBreakpoint = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    const effectiveOverrides = getEffectiveStyleOverridesForRelId(safeRelId, activeBreakpoint);
+    const localOverrides = getLocalStyleOverridesForRelId(safeRelId, activeBreakpoint);
+    const overridePosition = String(effectiveOverrides.position ?? "").trim().toLowerCase();
     const computedPosition = String(state.lastSelection?.computed?.position ?? "").trim().toLowerCase();
     const effectivePosition = overridePosition || computedPosition || "static";
 
@@ -6899,14 +7508,15 @@
       return;
     }
 
-    const previousPosition = String(overrides.position ?? "").trim();
+    const previousPosition = String(localOverrides.position ?? "").trim();
 
     applyStyleForRelId(safeRelId, "position", "relative");
-    setStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY, true);
+    setStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY, true, activeBreakpoint);
     setStyleMetadataValue(
       safeRelId,
       ORDER_AUTO_POSITION_PREV_META_KEY,
-      previousPosition || null
+      previousPosition || null,
+      activeBreakpoint
     );
   }
 
@@ -6916,18 +7526,19 @@
       return;
     }
 
-    const overrides = ensurePlainObject(state.overridesMeta[safeRelId]);
-    if (!isStyleMetadataTrue(overrides[ORDER_AUTO_POSITION_META_KEY])) {
+    const activeBreakpoint = normalizeBreakpointKey(state.preview.activeBreakpoint);
+    const localOverrides = getLocalStyleOverridesForRelId(safeRelId, activeBreakpoint);
+    if (!isStyleMetadataTrue(localOverrides[ORDER_AUTO_POSITION_META_KEY])) {
       return;
     }
 
-    const overridePosition = String(overrides.position ?? "").trim().toLowerCase();
-    const previousPosition = String(overrides[ORDER_AUTO_POSITION_PREV_META_KEY] ?? "").trim();
+    const overridePosition = String(localOverrides.position ?? "").trim().toLowerCase();
+    const previousPosition = String(localOverrides[ORDER_AUTO_POSITION_PREV_META_KEY] ?? "").trim();
     if (overridePosition === "relative") {
       applyStyleForRelId(safeRelId, "position", previousPosition);
     }
-    clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY);
-    clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_PREV_META_KEY);
+    clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY, activeBreakpoint);
+    clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_PREV_META_KEY, activeBreakpoint);
   }
 
   function normalizeBackgroundMode(value) {
@@ -6992,7 +7603,7 @@
     const safeRelId = String(relId || "").trim();
     const safeOverrides = overrides && typeof overrides === "object" ? overrides : {};
     const safeComputed = computed && typeof computed === "object" ? computed : {};
-    const stored = safeRelId ? ensurePlainObject(state.overridesMeta[safeRelId]) : {};
+    const stored = safeRelId ? ensurePlainObject(safeOverrides) : {};
 
     const overrideBackground = String(safeOverrides.background ?? "").trim();
     const computedBackground = String(safeComputed.background ?? "").trim();
@@ -7087,30 +7698,34 @@
     return normalized === "true" || normalized === "1" || normalized === "yes";
   }
 
-  function setStyleMetadataValue(relId, key, value) {
+  function setStyleMetadataValue(relId, key, value, breakpoint) {
     const safeRelId = String(relId || "").trim();
     const safeKey = String(key || "").trim();
     if (!safeRelId || !safeKey || !isStyleMetadataKey(safeKey)) {
       return;
     }
 
-    if (!state.overridesMeta[safeRelId]) {
-      state.overridesMeta[safeRelId] = {};
+    const bucket = getStyleBucketForBreakpoint(
+      typeof breakpoint === "string" ? breakpoint : state.preview.activeBreakpoint,
+      { ensure: true }
+    );
+    if (!bucket[safeRelId]) {
+      bucket[safeRelId] = {};
     }
 
     if (value == null || (typeof value === "string" && value.trim() === "")) {
-      delete state.overridesMeta[safeRelId][safeKey];
+      delete bucket[safeRelId][safeKey];
     } else {
-      state.overridesMeta[safeRelId][safeKey] = value;
+      bucket[safeRelId][safeKey] = value;
     }
 
-    if (Object.keys(state.overridesMeta[safeRelId]).length === 0) {
-      delete state.overridesMeta[safeRelId];
+    if (Object.keys(bucket[safeRelId]).length === 0) {
+      delete bucket[safeRelId];
     }
   }
 
-  function clearStyleMetadataValue(relId, key) {
-    setStyleMetadataValue(relId, key, null);
+  function clearStyleMetadataValue(relId, key, breakpoint) {
+    setStyleMetadataValue(relId, key, null, breakpoint);
   }
 
   function isGradientValue(value) {
@@ -7227,8 +7842,13 @@
     const runtimeDiff = JSON.stringify(normalizeRuntimeLibraries(state.runtimeLibraries)) !== JSON.stringify(normalizeRuntimeLibraries(state.defaultsLibraries));
     const runtimeFontsDiff = JSON.stringify(normalizeRuntimeFonts(state.runtimeFonts)) !== JSON.stringify(normalizeRuntimeFonts(state.defaultsFonts));
     const themeDiff = JSON.stringify(normalizeThemeState(state.theme)) !== JSON.stringify(normalizeThemeState(state.defaultsTheme));
+    const breakpointOverrides = ensureBreakpointOverridesState();
+    const breakpointHasContent = BREAKPOINT_ORDER
+      .filter((key) => key !== BREAKPOINT_DESKTOP)
+      .some((key) => Object.keys(ensurePlainObject(breakpointOverrides[key])).length > 0);
     return (
       Object.keys(state.overridesMeta).length > 0 ||
+      breakpointHasContent ||
       Object.keys(state.selectorMap).length > 0 ||
       Object.keys(state.attributeOverrides).length > 0 ||
       Object.keys(state.textOverrides).length > 0 ||

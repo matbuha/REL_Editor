@@ -39,6 +39,21 @@
       <button id="savePatchBtn" type="button">Save Patch</button>
       <button id="exportSafeBtn" type="button">Export Safe</button>
       <button id="resetLayoutBtn" type="button">Reset Layout</button>
+      <label id="previewBreakpointRow">
+        Preview
+        <select id="previewBreakpointSelect">
+          <option value="desktop">Desktop</option>
+          <option value="tablet">Tablet</option>
+          <option value="mobile">Mobile</option>
+        </select>
+      </label>
+      <div id="previewWidthRow" class="preview-width-row hidden">
+        <label>
+          Width
+          <input id="previewWidthRange" type="range" min="280" max="1400" step="1">
+        </label>
+        <span id="previewWidthValue" class="preview-width-value">768px</span>
+      </div>
     </div>
     <div class="libraries-box">
       <label>
@@ -111,7 +126,7 @@
       </div>
 
       <div class="tab-content" data-tab-content="add">
-        <div class="add-help">Drag a component into the iframe to append it into a container.</div>
+        <div class="add-help">Drag components into preview to insert before/after/inside, or click to append near current context.</div>
         <h3 class="add-title">Basic Elements</h3>
         <div id="addBasicList" class="add-list"></div>
         <div id="addExternalSection" class="add-external hidden">
@@ -217,7 +232,11 @@
     <div id="leftResizer" class="panel-resizer" aria-label="Resize left panel" role="separator"></div>
 
     <section class="panel panel-middle">
-      <iframe id="liveFrame" title="Live Preview"></iframe>
+      <div id="previewViewportWrap" class="preview-viewport-wrap">
+        <div id="previewViewport" class="preview-viewport">
+          <iframe id="liveFrame" title="Live Preview"></iframe>
+        </div>
+      </div>
     </section>
 
     <div id="rightResizer" class="panel-resizer" aria-label="Resize right panel" role="separator"></div>

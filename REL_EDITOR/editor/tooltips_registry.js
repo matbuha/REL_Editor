@@ -35,6 +35,27 @@
   add("top.savePatch", "Save Patch", "Writes patch.json and override.css under rel_editor.", ["Button action"], ["rel_editor/patch.json"]);
   add("top.exportSafe", "Export Safe", "Exports REL_* files without touching source files.", ["Button action"], ["REL_index.html", "REL_index.css"]);
   add("top.resetLayout", "Reset Layout", "Resets panel widths to defaults.", ["Button action"], ["Reset left/right panel widths"]);
+  add(
+    "top.previewBreakpoint",
+    "Preview Breakpoint",
+    "Switches preview canvas width between Desktop, Tablet, and Mobile simulation modes.",
+    ["desktop, tablet, mobile"],
+    ["Desktop", "Tablet", "Mobile"],
+    [
+      "Desktop = full preview width.",
+      "Tablet default width = 768px.",
+      "Mobile default width = 375px.",
+      "Preview only. Does not change your project unless you edit styles in this mode.",
+    ]
+  );
+  add(
+    "top.previewWidth",
+    "Preview Width",
+    "Adjusts preview width for Tablet/Mobile simulation only.",
+    ["Range input (px)"],
+    ["375px", "768px", "920px"],
+    ["Preview only. Does not change your project unless you edit styles in this mode."]
+  );
   add("top.designLibrary", "Design Library", "Injects runtime design library assets.", ["none, bootstrap, bulma, pico, tailwind"], ["Bootstrap 5"]);
   add("top.bootstrapJs", "Bootstrap JS bundle", "Enables Bootstrap JS runtime when Bootstrap is active.", ["Checkbox true/false"], ["Enable for collapse/modal"]);
   add("top.iconSet", "Icon Set", "Injects icon font assets in preview.", ["none, material-icons, font-awesome"], ["Material Icons"]);
@@ -133,7 +154,7 @@
     ["Insert section below hero block"]
   );
 
-  add("add.external", "Library Block", "Draggable block from active design library.", ["Drag and drop"], ["Bootstrap Card"]);
+  add("add.external", "Library Block", "Draggable block from active design library. You can also click to add using current target context.", ["Drag and drop", "Click to add"], ["Bootstrap Card"]);
   [
     ["section", "Section"],
     ["container", "Container"],
@@ -148,7 +169,7 @@
     ["spacer", "Spacer"],
     ["divider", "Divider"],
   ].forEach(([type, label]) => {
-    add(`add.${type}`, `Add ${label}`, `Draggable ${label.toLowerCase()} component.`, ["Drag and drop"], [`Drop ${label} into container`]);
+    add(`add.${type}`, `Add ${label}`, `Draggable ${label.toLowerCase()} component. You can also click to add using current target context.`, ["Drag and drop", "Click to add"], [`Drop ${label} into container`]);
   });
 
   add("inspector.attr.id", "ID", "Sets element id attribute.", ["HTML id token"], ["main-title"]);
@@ -218,6 +239,14 @@
   add("style.backgroundModeSolid", "Background Mode: Solid", "Switches active background mode to solid.", ["Mode switch"], ["Solid"]);
   add("style.backgroundModeGradient", "Background Mode: Gradient", "Switches active background mode to gradient.", ["Mode switch"], ["Gradient"]);
   add("style.backgroundModeImage", "Background Mode: Image", "Switches active background mode to image.", ["Mode switch"], ["Image"]);
+  add(
+    "style.resetBreakpointSection",
+    "Reset for this breakpoint",
+    "Clears overrides from the current responsive mode for this section only.",
+    ["Button action"],
+    ["Reset Spacing for Tablet"],
+    ["Desktop/base values are not removed."]
+  );
 
   add("theme.preset", "Theme Preset", "Switches active theme preset.", ["Preset selection"], ["Default"]);
   add("theme.name", "Theme Name", "Name used for create/save preset operations.", ["Plain text"], ["Marketing Light"]);
