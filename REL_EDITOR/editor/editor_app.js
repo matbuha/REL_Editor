@@ -29,6 +29,11 @@
       ],
     },
     {
+      key: "layering",
+      title: "LAYERING",
+      controls: [{ label: "order", type: "order" }],
+    },
+    {
       key: "background",
       title: "Background",
       controls: [{ label: "background", type: "background" }],
@@ -175,6 +180,21 @@
   const DEFAULT_VITE_DEV_URL = "http://localhost:5173";
   const CARD_CENTER_TRIGGER_PROPS = new Set(["justify-content", "align-items"]);
   const VITE_GLOBAL_TARGET_PROPS = ["background", "background-color", "background-image", "color"];
+  const LAYER_ORDER_MIN = 0;
+  const LAYER_ORDER_MAX = 1000;
+  const ORDER_AUTO_POSITION_META_KEY = "_relAutoPositionForZ";
+  const ORDER_AUTO_POSITION_PREV_META_KEY = "_relAutoPositionPrev";
+  const ROOT_LIKE_LAYER_TAGS = new Set(["html", "body"]);
+  const BG_META_SOLID_KEY = "_relBgSolid";
+  const BG_META_GRADIENT_KEY = "_relBgGradient";
+  const BG_META_IMAGE_ENABLED_KEY = "_relBgImageEnabled";
+  const BG_META_IMAGE_URL_KEY = "_relBgImageUrl";
+  const BG_META_IMAGE_SIZE_KEY = "_relBgImageSize";
+  const BG_META_IMAGE_POSITION_KEY = "_relBgImagePosition";
+  const BG_META_IMAGE_REPEAT_KEY = "_relBgImageRepeat";
+  const BG_SIZE_OPTIONS = ["auto", "contain", "cover"];
+  const BG_POSITION_OPTIONS = ["center", "top", "bottom", "left", "right"];
+  const BG_REPEAT_OPTIONS = ["no-repeat", "repeat"];
   const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
   const LEFT_MIN_PX = 200;
   const RIGHT_MIN_PX = 260;
@@ -257,9 +277,21 @@
       backgroundGradientRow: null,
       backgroundSolidRadio: null,
       backgroundGradientRadio: null,
+      backgroundImageRadio: null,
       backgroundSolidInput: null,
       backgroundGradientInput: null,
+      backgroundImageGroup: null,
+      backgroundImageToggle: null,
+      backgroundImageUploadBtn: null,
+      backgroundImageUploadInput: null,
+      backgroundImageUrlInput: null,
+      backgroundImageSizeInput: null,
+      backgroundImagePositionInput: null,
+      backgroundImageRepeatInput: null,
+      backgroundImageClearBtn: null,
       backgroundPreview: null,
+      layerOrderInput: null,
+      layerOrderResetBtn: null,
       verticalAlignSelect: null,
       pendingUnloadedFontFamily: "",
       shadowRoot: null,
@@ -1182,9 +1214,21 @@
     state.controls.backgroundGradientRow = null;
     state.controls.backgroundSolidRadio = null;
     state.controls.backgroundGradientRadio = null;
+    state.controls.backgroundImageRadio = null;
     state.controls.backgroundSolidInput = null;
     state.controls.backgroundGradientInput = null;
+    state.controls.backgroundImageGroup = null;
+    state.controls.backgroundImageToggle = null;
+    state.controls.backgroundImageUploadBtn = null;
+    state.controls.backgroundImageUploadInput = null;
+    state.controls.backgroundImageUrlInput = null;
+    state.controls.backgroundImageSizeInput = null;
+    state.controls.backgroundImagePositionInput = null;
+    state.controls.backgroundImageRepeatInput = null;
+    state.controls.backgroundImageClearBtn = null;
     state.controls.backgroundPreview = null;
+    state.controls.layerOrderInput = null;
+    state.controls.layerOrderResetBtn = null;
     state.controls.verticalAlignSelect = null;
     state.controls.shadowRoot = null;
     state.controls.shadowEnabledInput = null;
@@ -1211,6 +1255,10 @@
       sectionRoot.appendChild(title);
 
       for (const control of section.controls) {
+        if (control.type === "order") {
+          buildLayerOrderControl(sectionRoot, control);
+          continue;
+        }
         if (control.type === "background") {
           buildBackgroundControl(sectionRoot);
           continue;
@@ -1236,6 +1284,13 @@
     rebuildFontFamilyOptions("");
     updateBackgroundControlVisibility();
     updateBackgroundPreview();
+    if (state.controls.layerOrderInput) {
+      state.controls.layerOrderInput.value = "0";
+      state.controls.layerOrderInput.disabled = true;
+    }
+    if (state.controls.layerOrderResetBtn) {
+      state.controls.layerOrderResetBtn.disabled = true;
+    }
     if (state.controls.verticalAlignSelect) {
       state.controls.verticalAlignSelect.value = "";
       state.controls.verticalAlignSelect.disabled = true;
@@ -1260,6 +1315,48 @@
     row.appendChild(input);
     container.appendChild(row);
     state.controls.styleInputs[control.property] = input;
+  }
+
+  function buildLayerOrderControl(container, control) {
+    const row = document.createElement("label");
+    row.className = "control-item";
+    row.setAttribute("data-property", "z-index");
+
+    const caption = document.createElement("span");
+    caption.textContent = control.label || "order";
+
+    const actions = document.createElement("div");
+    actions.className = "control-inline-actions";
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = String(LAYER_ORDER_MIN);
+    input.max = String(LAYER_ORDER_MAX);
+    input.step = "1";
+    input.value = "0";
+    input.addEventListener("input", () => {
+      applyLayerOrderFromControl(input.value);
+    });
+    input.addEventListener("change", () => {
+      applyLayerOrderFromControl(input.value);
+    });
+
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.textContent = "Reset";
+    resetBtn.addEventListener("click", () => {
+      input.value = "0";
+      applyLayerOrderFromControl("0");
+    });
+
+    actions.appendChild(input);
+    actions.appendChild(resetBtn);
+    row.appendChild(caption);
+    row.appendChild(actions);
+    container.appendChild(row);
+
+    state.controls.layerOrderInput = input;
+    state.controls.layerOrderResetBtn = resetBtn;
   }
 
   function createSimpleControlInput(control) {
@@ -1382,8 +1479,20 @@
     gradientLabel.appendChild(gradientRadio);
     gradientLabel.appendChild(gradientText);
 
+    const imageLabel = document.createElement("label");
+    imageLabel.className = "radio-option";
+    const imageRadio = document.createElement("input");
+    imageRadio.type = "radio";
+    imageRadio.name = radioName;
+    imageRadio.value = "image";
+    const imageText = document.createElement("span");
+    imageText.textContent = "Image";
+    imageLabel.appendChild(imageRadio);
+    imageLabel.appendChild(imageText);
+
     row.appendChild(solidLabel);
     row.appendChild(gradientLabel);
+    row.appendChild(imageLabel);
     container.appendChild(row);
 
     const solidRow = document.createElement("label");
@@ -1421,6 +1530,102 @@
     gradientRow.appendChild(gradientInput);
     container.appendChild(gradientRow);
 
+    const imageGroup = document.createElement("div");
+    imageGroup.className = "background-image-group hidden";
+
+    const imageToggleRow = document.createElement("label");
+    imageToggleRow.className = "check-row";
+    const imageToggle = document.createElement("input");
+    imageToggle.type = "checkbox";
+    const imageToggleText = document.createElement("span");
+    imageToggleText.textContent = "Use background image";
+    imageToggleRow.appendChild(imageToggle);
+    imageToggleRow.appendChild(imageToggleText);
+    imageGroup.appendChild(imageToggleRow);
+
+    const imageUploadRow = document.createElement("div");
+    imageUploadRow.className = "upload-row";
+    const imageUploadBtn = document.createElement("button");
+    imageUploadBtn.type = "button";
+    imageUploadBtn.textContent = "Choose Image";
+    const imageUploadInput = document.createElement("input");
+    imageUploadInput.type = "file";
+    imageUploadInput.accept = "image/*";
+    imageUploadInput.hidden = true;
+    imageUploadRow.appendChild(imageUploadBtn);
+    imageUploadRow.appendChild(imageUploadInput);
+    imageGroup.appendChild(imageUploadRow);
+
+    const imageUrlRow = document.createElement("label");
+    imageUrlRow.className = "control-item";
+    imageUrlRow.setAttribute("data-property", "background-image");
+    const imageUrlCaption = document.createElement("span");
+    imageUrlCaption.textContent = "Image URL";
+    const imageUrlInput = document.createElement("input");
+    imageUrlInput.type = "text";
+    imageUrlInput.placeholder = "REL_assets/background.png or https://...";
+    imageUrlRow.appendChild(imageUrlCaption);
+    imageUrlRow.appendChild(imageUrlInput);
+    imageGroup.appendChild(imageUrlRow);
+
+    const imageSizeRow = document.createElement("label");
+    imageSizeRow.className = "control-item";
+    imageSizeRow.setAttribute("data-property", "background-size");
+    const imageSizeCaption = document.createElement("span");
+    imageSizeCaption.textContent = "background-size";
+    const imageSizeInput = document.createElement("select");
+    for (const optionValue of BG_SIZE_OPTIONS) {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = optionValue;
+      imageSizeInput.appendChild(option);
+    }
+    imageSizeRow.appendChild(imageSizeCaption);
+    imageSizeRow.appendChild(imageSizeInput);
+    imageGroup.appendChild(imageSizeRow);
+
+    const imagePositionRow = document.createElement("label");
+    imagePositionRow.className = "control-item";
+    imagePositionRow.setAttribute("data-property", "background-position");
+    const imagePositionCaption = document.createElement("span");
+    imagePositionCaption.textContent = "background-position";
+    const imagePositionInput = document.createElement("select");
+    for (const optionValue of BG_POSITION_OPTIONS) {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = optionValue;
+      imagePositionInput.appendChild(option);
+    }
+    imagePositionRow.appendChild(imagePositionCaption);
+    imagePositionRow.appendChild(imagePositionInput);
+    imageGroup.appendChild(imagePositionRow);
+
+    const imageRepeatRow = document.createElement("label");
+    imageRepeatRow.className = "control-item";
+    imageRepeatRow.setAttribute("data-property", "background-repeat");
+    const imageRepeatCaption = document.createElement("span");
+    imageRepeatCaption.textContent = "background-repeat";
+    const imageRepeatInput = document.createElement("select");
+    for (const optionValue of BG_REPEAT_OPTIONS) {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = optionValue;
+      imageRepeatInput.appendChild(option);
+    }
+    imageRepeatRow.appendChild(imageRepeatCaption);
+    imageRepeatRow.appendChild(imageRepeatInput);
+    imageGroup.appendChild(imageRepeatRow);
+
+    const imageActionsRow = document.createElement("div");
+    imageActionsRow.className = "background-image-actions";
+    const clearImageBtn = document.createElement("button");
+    clearImageBtn.type = "button";
+    clearImageBtn.textContent = "Clear image";
+    imageActionsRow.appendChild(clearImageBtn);
+    imageGroup.appendChild(imageActionsRow);
+
+    container.appendChild(imageGroup);
+
     const preview = document.createElement("div");
     preview.className = "background-preview";
     container.appendChild(preview);
@@ -1441,17 +1646,81 @@
       applyBackgroundFromControls();
     });
 
+    imageRadio.addEventListener("change", () => {
+      if (!imageRadio.checked) {
+        return;
+      }
+      setBackgroundType("image", true);
+      applyBackgroundFromControls();
+    });
+
+    imageToggle.addEventListener("change", () => {
+      if (state.controls.backgroundType !== "image") {
+        setBackgroundType("image", true);
+      }
+      applyBackgroundFromControls();
+    });
+
+    imageUploadBtn.addEventListener("click", () => {
+      imageUploadInput.click();
+    });
+    imageUploadInput.addEventListener("change", async () => {
+      await uploadBackgroundImageFromInput();
+    });
+
+    imageUrlInput.addEventListener("input", () => {
+      if (state.controls.backgroundType !== "image") {
+        setBackgroundType("image", true);
+      }
+      applyBackgroundFromControls();
+    });
+
+    imageSizeInput.addEventListener("change", () => {
+      if (state.controls.backgroundType !== "image") {
+        setBackgroundType("image", true);
+      }
+      applyBackgroundFromControls();
+    });
+
+    imagePositionInput.addEventListener("change", () => {
+      if (state.controls.backgroundType !== "image") {
+        setBackgroundType("image", true);
+      }
+      applyBackgroundFromControls();
+    });
+
+    imageRepeatInput.addEventListener("change", () => {
+      if (state.controls.backgroundType !== "image") {
+        setBackgroundType("image", true);
+      }
+      applyBackgroundFromControls();
+    });
+
+    clearImageBtn.addEventListener("click", () => {
+      clearBackgroundImageFromControls();
+    });
+
     state.controls.backgroundSolidRow = solidRow;
     state.controls.backgroundGradientRow = gradientRow;
     state.controls.backgroundSolidRadio = solidRadio;
     state.controls.backgroundGradientRadio = gradientRadio;
+    state.controls.backgroundImageRadio = imageRadio;
     state.controls.backgroundSolidInput = solidInput;
     state.controls.backgroundGradientInput = gradientInput;
+    state.controls.backgroundImageGroup = imageGroup;
+    state.controls.backgroundImageToggle = imageToggle;
+    state.controls.backgroundImageUploadBtn = imageUploadBtn;
+    state.controls.backgroundImageUploadInput = imageUploadInput;
+    state.controls.backgroundImageUrlInput = imageUrlInput;
+    state.controls.backgroundImageSizeInput = imageSizeInput;
+    state.controls.backgroundImagePositionInput = imagePositionInput;
+    state.controls.backgroundImageRepeatInput = imageRepeatInput;
+    state.controls.backgroundImageClearBtn = clearImageBtn;
     state.controls.backgroundPreview = preview;
   }
 
   function setBackgroundType(type, force) {
-    const nextType = type === "gradient" ? "gradient" : "solid";
+    const nextType = normalizeBackgroundMode(type);
     if (!force && state.controls.backgroundType === nextType) {
       return;
     }
@@ -1465,17 +1734,43 @@
 
   function updateBackgroundControlVisibility() {
     const isGradient = state.controls.backgroundType === "gradient";
+    const isImage = state.controls.backgroundType === "image";
     if (state.controls.backgroundSolidRow) {
-      state.controls.backgroundSolidRow.classList.toggle("hidden", isGradient);
+      state.controls.backgroundSolidRow.classList.toggle("hidden", isGradient || isImage);
     }
     if (state.controls.backgroundGradientRow) {
       state.controls.backgroundGradientRow.classList.toggle("hidden", !isGradient);
     }
+    if (state.controls.backgroundImageGroup) {
+      state.controls.backgroundImageGroup.classList.toggle("hidden", !isImage);
+    }
     if (state.controls.backgroundSolidRadio) {
-      state.controls.backgroundSolidRadio.checked = !isGradient;
+      state.controls.backgroundSolidRadio.checked = !isGradient && !isImage;
     }
     if (state.controls.backgroundGradientRadio) {
       state.controls.backgroundGradientRadio.checked = isGradient;
+    }
+    if (state.controls.backgroundImageRadio) {
+      state.controls.backgroundImageRadio.checked = isImage;
+    }
+    const imageControlsDisabled = !isImage || !Boolean(state.controls.backgroundImageToggle?.checked);
+    if (state.controls.backgroundImageUploadBtn) {
+      state.controls.backgroundImageUploadBtn.disabled = !isImage;
+    }
+    if (state.controls.backgroundImageUrlInput) {
+      state.controls.backgroundImageUrlInput.disabled = imageControlsDisabled;
+    }
+    if (state.controls.backgroundImageSizeInput) {
+      state.controls.backgroundImageSizeInput.disabled = imageControlsDisabled;
+    }
+    if (state.controls.backgroundImagePositionInput) {
+      state.controls.backgroundImagePositionInput.disabled = imageControlsDisabled;
+    }
+    if (state.controls.backgroundImageRepeatInput) {
+      state.controls.backgroundImageRepeatInput.disabled = imageControlsDisabled;
+    }
+    if (state.controls.backgroundImageClearBtn) {
+      state.controls.backgroundImageClearBtn.disabled = !isImage;
     }
   }
 
@@ -1485,15 +1780,42 @@
       return;
     }
 
+    const relId = String(state.selectedRelId || "").trim();
+    if (!relId) {
+      updateBackgroundPreview();
+      return;
+    }
+
+    const draft = readBackgroundDraftFromControls();
+    writeBackgroundDraftMeta(relId, draft);
+
     if (state.controls.backgroundType === "gradient") {
-      const gradientValue = String(state.controls.backgroundGradientInput?.value || "").trim();
-      applyStyle("background-image", "");
-      applyStyle("background", gradientValue);
+      applyStyleForRelId(relId, "background-image", "");
+      applyStyleForRelId(relId, "background-size", "");
+      applyStyleForRelId(relId, "background-position", "");
+      applyStyleForRelId(relId, "background-repeat", "");
+      applyStyleForRelId(relId, "background", draft.gradient);
+    } else if (state.controls.backgroundType === "image") {
+      applyStyleForRelId(relId, "background", "");
+      applyStyleForRelId(relId, "background-color", "");
+      if (draft.imageEnabled && draft.imageUrl) {
+        applyStyleForRelId(relId, "background-image", buildCssBackgroundImageUrl(draft.imageUrl));
+        applyStyleForRelId(relId, "background-size", draft.imageSize);
+        applyStyleForRelId(relId, "background-position", draft.imagePosition);
+        applyStyleForRelId(relId, "background-repeat", draft.imageRepeat);
+      } else {
+        applyStyleForRelId(relId, "background-image", "");
+        applyStyleForRelId(relId, "background-size", "");
+        applyStyleForRelId(relId, "background-position", "");
+        applyStyleForRelId(relId, "background-repeat", "");
+      }
     } else {
-      const solidValue = String(state.controls.backgroundSolidInput?.value || "").trim();
-      applyStyle("background", solidValue);
-      applyStyle("background-image", "none");
-      applyStyle("background-color", "");
+      applyStyleForRelId(relId, "background", draft.solid);
+      applyStyleForRelId(relId, "background-image", "none");
+      applyStyleForRelId(relId, "background-color", "");
+      applyStyleForRelId(relId, "background-size", "");
+      applyStyleForRelId(relId, "background-position", "");
+      applyStyleForRelId(relId, "background-repeat", "");
     }
     updateBackgroundPreview();
   }
@@ -1506,6 +1828,10 @@
 
     preview.style.background = "";
     preview.style.backgroundColor = "";
+    preview.style.backgroundImage = "";
+    preview.style.backgroundSize = "";
+    preview.style.backgroundPosition = "";
+    preview.style.backgroundRepeat = "";
 
     if (state.controls.backgroundType === "gradient") {
       const gradientValue = String(state.controls.backgroundGradientInput?.value || "").trim();
@@ -1515,10 +1841,72 @@
       return;
     }
 
+    if (state.controls.backgroundType === "image") {
+      const enabled = Boolean(state.controls.backgroundImageToggle?.checked);
+      const rawImageUrl = String(state.controls.backgroundImageUrlInput?.value || "").trim();
+      const imageUrl = normalizeBackgroundImageUrl(rawImageUrl);
+      if (enabled && imageUrl) {
+        preview.style.backgroundImage = buildCssBackgroundImageUrl(imageUrl);
+        preview.style.backgroundSize = normalizeEnumValue(state.controls.backgroundImageSizeInput?.value, BG_SIZE_OPTIONS, "cover");
+        preview.style.backgroundPosition = normalizeEnumValue(state.controls.backgroundImagePositionInput?.value, BG_POSITION_OPTIONS, "center");
+        preview.style.backgroundRepeat = normalizeEnumValue(state.controls.backgroundImageRepeatInput?.value, BG_REPEAT_OPTIONS, "no-repeat");
+      }
+      return;
+    }
+
     const colorValue = String(state.controls.backgroundSolidInput?.value || "").trim();
     if (colorValue) {
       preview.style.backgroundColor = colorValue;
     }
+  }
+
+  async function uploadBackgroundImageFromInput() {
+    const fileInput = state.controls.backgroundImageUploadInput;
+    const file = fileInput?.files && fileInput.files[0];
+    if (!file) {
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const response = await fetch("/api/upload-background-image", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+    fileInput.value = "";
+
+    if (!response.ok || !data.ok) {
+      setStatus(data.error || "Background image upload failed", true);
+      return;
+    }
+
+    if (state.controls.backgroundImageUrlInput) {
+      state.controls.backgroundImageUrlInput.value = String(data.css_url || "").trim();
+    }
+    if (state.controls.backgroundImageToggle) {
+      state.controls.backgroundImageToggle.checked = true;
+    }
+    if (state.controls.backgroundType !== "image") {
+      setBackgroundType("image", true);
+    }
+    applyBackgroundFromControls();
+    setStatus(`Background image uploaded: ${data.file_name}`);
+  }
+
+  function clearBackgroundImageFromControls() {
+    if (state.controls.backgroundImageToggle) {
+      state.controls.backgroundImageToggle.checked = false;
+    }
+    if (state.controls.backgroundImageUrlInput) {
+      state.controls.backgroundImageUrlInput.value = "";
+    }
+    if (state.controls.backgroundType !== "image") {
+      setBackgroundType("image", true);
+    }
+    applyBackgroundFromControls();
+    setStatus("Background image cleared");
   }
 
   function applyVerticalAlignContent(mode) {
@@ -3035,9 +3423,31 @@
     if (state.controls.backgroundGradientInput) {
       state.controls.backgroundGradientInput.value = "";
     }
+    if (state.controls.backgroundImageToggle) {
+      state.controls.backgroundImageToggle.checked = false;
+    }
+    if (state.controls.backgroundImageUrlInput) {
+      state.controls.backgroundImageUrlInput.value = "";
+    }
+    if (state.controls.backgroundImageSizeInput) {
+      state.controls.backgroundImageSizeInput.value = "cover";
+    }
+    if (state.controls.backgroundImagePositionInput) {
+      state.controls.backgroundImagePositionInput.value = "center";
+    }
+    if (state.controls.backgroundImageRepeatInput) {
+      state.controls.backgroundImageRepeatInput.value = "no-repeat";
+    }
     setBackgroundType("solid", true);
     updateFontLoadingWarning("");
     updateBackgroundPreview();
+    if (state.controls.layerOrderInput) {
+      state.controls.layerOrderInput.value = "0";
+      state.controls.layerOrderInput.disabled = true;
+    }
+    if (state.controls.layerOrderResetBtn) {
+      state.controls.layerOrderResetBtn.disabled = true;
+    }
     if (state.controls.verticalAlignSelect) {
       state.controls.verticalAlignSelect.value = "";
       state.controls.verticalAlignSelect.disabled = true;
@@ -3084,25 +3494,22 @@
   }
 
   function updateStyleControlValues(computed, overrides, options) {
+    const safeComputed = computed && typeof computed === "object" ? computed : {};
+    const safeOverrides = overrides && typeof overrides === "object" ? overrides : {};
     for (const property of Object.keys(state.controls.styleInputs || {})) {
       const input = state.controls.styleInputs[property];
       if (!input) {
         continue;
       }
-      input.value = overrides[property] ?? computed[property] ?? "";
+      input.value = safeOverrides[property] ?? safeComputed[property] ?? "";
     }
 
-    const effectiveFontFamily = overrides["font-family"] ?? computed["font-family"] ?? "";
+    const effectiveFontFamily = safeOverrides["font-family"] ?? safeComputed["font-family"] ?? "";
     rebuildFontFamilyOptions(effectiveFontFamily);
 
-    const overrideBackground = String(overrides.background ?? "").trim();
-    const computedBackground = String(computed.background ?? "").trim();
-    const computedBackgroundImage = String(computed["background-image"] ?? "").trim();
-    const overrideBackgroundColor = String(overrides["background-color"] ?? "").trim();
-    const computedBackgroundColor = String(computed["background-color"] ?? "").trim();
     const relId = String(options?.relId || state.selectedRelId || "");
     const selectionChanged = Boolean(options?.selectionChanged);
-    const detectedMode = detectBackgroundMode(overrides, computed);
+    const detectedMode = detectBackgroundMode(safeOverrides, safeComputed);
     const rememberedMode = relId ? state.controls.backgroundModeByRelId[relId] : "";
     const nextMode = selectionChanged
       ? detectedMode
@@ -3118,28 +3525,38 @@
       state.controls.backgroundModeByRelId[relId] = nextMode;
     }
 
-    const gradientValue = overrideBackground || computedBackground || (isGradientValue(computedBackgroundImage) ? computedBackgroundImage : "");
-    const colorValue = overrideBackgroundColor ||
-      (!isGradientValue(overrideBackground) ? overrideBackground : "") ||
-      computedBackgroundColor;
+    const draft = resolveBackgroundDraft(relId, safeOverrides, safeComputed);
     if (state.controls.backgroundGradientInput) {
-      if (nextMode === "gradient") {
-        state.controls.backgroundGradientInput.value = gradientValue;
-      } else if (selectionChanged) {
-        state.controls.backgroundGradientInput.value = "";
-      }
+      state.controls.backgroundGradientInput.value = draft.gradient;
     }
     if (state.controls.backgroundSolidInput) {
-      if (nextMode === "solid") {
-        state.controls.backgroundSolidInput.value = toHexColor(colorValue, "#ffffff");
-      } else if (selectionChanged && colorValue) {
-        state.controls.backgroundSolidInput.value = toHexColor(colorValue, "#ffffff");
-      }
+      state.controls.backgroundSolidInput.value = draft.solid;
+    }
+    if (state.controls.backgroundImageToggle) {
+      state.controls.backgroundImageToggle.checked = Boolean(draft.imageEnabled);
+    }
+    if (state.controls.backgroundImageUrlInput) {
+      state.controls.backgroundImageUrlInput.value = draft.imageUrl;
+    }
+    if (state.controls.backgroundImageSizeInput) {
+      state.controls.backgroundImageSizeInput.value = draft.imageSize;
+    }
+    if (state.controls.backgroundImagePositionInput) {
+      state.controls.backgroundImagePositionInput.value = draft.imagePosition;
+    }
+    if (state.controls.backgroundImageRepeatInput) {
+      state.controls.backgroundImageRepeatInput.value = draft.imageRepeat;
     }
 
+    updateBackgroundControlVisibility();
     updateBackgroundPreview();
-    updateVerticalAlignControlForSelection(options?.selection || state.lastSelection || {}, computed, overrides);
-    updateShadowControlValues(computed, overrides, options?.selection || state.lastSelection || {}, options || {});
+    updateLayerOrderControlForSelection(
+      options?.selection || state.lastSelection || {},
+      safeComputed,
+      safeOverrides
+    );
+    updateVerticalAlignControlForSelection(options?.selection || state.lastSelection || {}, safeComputed, safeOverrides);
+    updateShadowControlValues(safeComputed, safeOverrides, options?.selection || state.lastSelection || {}, options || {});
   }
 
   function updateAttributesPanel(selection, attrs) {
@@ -3220,6 +3637,52 @@
     dom.deleteElementBtn.disabled = !canDelete;
   }
 
+  function applyLayerOrderFromControl(rawValue) {
+    if (!state.selectedRelId) {
+      return;
+    }
+    if (isRootLikeLayerSelection(state.lastSelection || {})) {
+      return;
+    }
+
+    const relId = String(state.selectedRelId || "").trim();
+    if (!relId) {
+      return;
+    }
+
+    const orderValue = normalizeLayerOrder(rawValue);
+    if (state.controls.layerOrderInput) {
+      state.controls.layerOrderInput.value = String(orderValue);
+    }
+
+    applyStyleForRelId(relId, "z-index", orderValue > 0 ? String(orderValue) : "");
+    if (orderValue > 0) {
+      ensurePositionOverrideForLayerOrder(relId);
+      return;
+    }
+    clearAutoPositionForLayerOrder(relId);
+  }
+
+  function updateLayerOrderControlForSelection(selection, computed, overrides) {
+    const input = state.controls.layerOrderInput;
+    if (!input) {
+      return;
+    }
+
+    const safeSelection = selection && typeof selection === "object" ? selection : {};
+    const safeComputed = computed && typeof computed === "object" ? computed : {};
+    const safeOverrides = overrides && typeof overrides === "object" ? overrides : {};
+    const disabled = isRootLikeLayerSelection(safeSelection);
+    const zValue = safeOverrides["z-index"] ?? safeComputed["z-index"] ?? "";
+    const normalized = normalizeLayerOrder(zValue);
+
+    input.value = String(normalized);
+    input.disabled = disabled;
+    if (state.controls.layerOrderResetBtn) {
+      state.controls.layerOrderResetBtn.disabled = disabled;
+    }
+  }
+
   function applyStyle(property, value) {
     if (!state.selectedRelId) {
       return;
@@ -3253,6 +3716,10 @@
       delete state.overridesMeta[safeRelId][safeProperty];
     } else {
       state.overridesMeta[safeRelId][safeProperty] = normalizedValue;
+    }
+    if (safeProperty === "position" && trimmedValue.toLowerCase() !== "relative") {
+      clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY);
+      clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_PREV_META_KEY);
     }
     const borderBoxPayload = ensureBorderBoxOverrideForSizing(safeRelId, safeProperty, trimmedValue);
 
@@ -3629,6 +4096,9 @@
     for (const relId of Object.keys(state.overridesMeta)) {
       const props = state.overridesMeta[relId] || {};
       for (const property of Object.keys(props)) {
+        if (isStyleMetadataKey(property)) {
+          continue;
+        }
         sendToOverlay({
           type: "REL_APPLY_STYLE",
           payload: { relId, property, value: props[property] },
@@ -3834,6 +4304,7 @@
     for (const relId of relIds) {
       const props = overridesMeta[relId] || {};
       const entries = Object.entries(props)
+        .filter(([property]) => !isStyleMetadataKey(property))
         .map(([property, value]) => [property, normalizeRgbaAlphaInCssValue(String(value ?? ""))])
         .filter(([, value]) => String(value).trim() !== "");
       if (entries.length === 0) {
@@ -4317,6 +4788,248 @@
     return ensureFontFamilies(state.runtimeFonts.families).some((item) => item.toLowerCase() === target);
   }
 
+  function normalizeLayerOrder(value) {
+    const parsed = Number(String(value ?? "").trim());
+    if (!Number.isFinite(parsed)) {
+      return 0;
+    }
+    return clamp(Math.round(parsed), LAYER_ORDER_MIN, LAYER_ORDER_MAX);
+  }
+
+  function isRootLikeLayerSelection(selection) {
+    const tagName = String(selection?.tagName || "").trim().toLowerCase();
+    return ROOT_LIKE_LAYER_TAGS.has(tagName);
+  }
+
+  function ensurePositionOverrideForLayerOrder(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+
+    const overrides = ensurePlainObject(state.overridesMeta[safeRelId]);
+    const overridePosition = String(overrides.position ?? "").trim().toLowerCase();
+    const computedPosition = String(state.lastSelection?.computed?.position ?? "").trim().toLowerCase();
+    const effectivePosition = overridePosition || computedPosition || "static";
+
+    if (effectivePosition !== "static") {
+      return;
+    }
+
+    const previousPosition = String(overrides.position ?? "").trim();
+
+    applyStyleForRelId(safeRelId, "position", "relative");
+    setStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY, true);
+    setStyleMetadataValue(
+      safeRelId,
+      ORDER_AUTO_POSITION_PREV_META_KEY,
+      previousPosition || null
+    );
+  }
+
+  function clearAutoPositionForLayerOrder(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+
+    const overrides = ensurePlainObject(state.overridesMeta[safeRelId]);
+    if (!isStyleMetadataTrue(overrides[ORDER_AUTO_POSITION_META_KEY])) {
+      return;
+    }
+
+    const overridePosition = String(overrides.position ?? "").trim().toLowerCase();
+    const previousPosition = String(overrides[ORDER_AUTO_POSITION_PREV_META_KEY] ?? "").trim();
+    if (overridePosition === "relative") {
+      applyStyleForRelId(safeRelId, "position", previousPosition);
+    }
+    clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_META_KEY);
+    clearStyleMetadataValue(safeRelId, ORDER_AUTO_POSITION_PREV_META_KEY);
+  }
+
+  function normalizeBackgroundMode(value) {
+    const mode = String(value || "").trim().toLowerCase();
+    if (mode === "gradient") {
+      return "gradient";
+    }
+    if (mode === "image") {
+      return "image";
+    }
+    return "solid";
+  }
+
+  function normalizeBackgroundImageUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "";
+    }
+
+    if (/^url\s*\(/i.test(raw)) {
+      return extractBackgroundImageUrl(raw);
+    }
+
+    if (raw.startsWith("/project/")) {
+      return raw.slice("/project/".length);
+    }
+
+    return raw;
+  }
+
+  function buildCssBackgroundImageUrl(value) {
+    const raw = normalizeBackgroundImageUrl(value);
+    if (!raw) {
+      return "";
+    }
+    const escaped = raw.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+    return `url("${escaped}")`;
+  }
+
+  function extractBackgroundImageUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw.toLowerCase() === "none") {
+      return "";
+    }
+
+    const match = raw.match(/url\((.+)\)/i);
+    if (!match || !match[1]) {
+      return "";
+    }
+    return String(match[1]).trim().replace(/^['"]|['"]$/g, "");
+  }
+
+  function isBackgroundImageValue(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized || normalized === "none") {
+      return false;
+    }
+    return normalized.includes("url(");
+  }
+
+  function resolveBackgroundDraft(relId, overrides, computed) {
+    const safeRelId = String(relId || "").trim();
+    const safeOverrides = overrides && typeof overrides === "object" ? overrides : {};
+    const safeComputed = computed && typeof computed === "object" ? computed : {};
+    const stored = safeRelId ? ensurePlainObject(state.overridesMeta[safeRelId]) : {};
+
+    const overrideBackground = String(safeOverrides.background ?? "").trim();
+    const computedBackground = String(safeComputed.background ?? "").trim();
+    const overrideBackgroundColor = String(safeOverrides["background-color"] ?? "").trim();
+    const computedBackgroundColor = String(safeComputed["background-color"] ?? "").trim();
+    const overrideBackgroundImage = String(safeOverrides["background-image"] ?? "").trim();
+    const computedBackgroundImage = String(safeComputed["background-image"] ?? "").trim();
+
+    const colorFallback = overrideBackgroundColor ||
+      (!isGradientValue(overrideBackground) && !isBackgroundImageValue(overrideBackground) ? overrideBackground : "") ||
+      computedBackgroundColor;
+    const gradientFallback = isGradientValue(overrideBackground)
+      ? overrideBackground
+      : (isGradientValue(computedBackground) ? computedBackground : (isGradientValue(computedBackgroundImage) ? computedBackgroundImage : ""));
+    const imageFallback = extractBackgroundImageUrl(overrideBackgroundImage) || extractBackgroundImageUrl(computedBackgroundImage);
+
+    const solid = toHexColor(
+      stored[BG_META_SOLID_KEY] ??
+      colorFallback,
+      "#ffffff"
+    );
+    const gradient = String(stored[BG_META_GRADIENT_KEY] ?? gradientFallback).trim();
+    const imageUrl = normalizeBackgroundImageUrl(String(stored[BG_META_IMAGE_URL_KEY] ?? imageFallback).trim());
+    const imageEnabledRaw = stored[BG_META_IMAGE_ENABLED_KEY];
+    const imageEnabled = typeof imageEnabledRaw === "boolean"
+      ? imageEnabledRaw
+      : (String(imageEnabledRaw || "").trim() === "" ? Boolean(imageUrl) : ["true", "1", "yes"].includes(String(imageEnabledRaw).trim().toLowerCase()));
+    const imageSize = normalizeEnumValue(
+      stored[BG_META_IMAGE_SIZE_KEY] ?? safeOverrides["background-size"] ?? safeComputed["background-size"],
+      BG_SIZE_OPTIONS,
+      "cover"
+    );
+    const imagePosition = normalizeEnumValue(
+      stored[BG_META_IMAGE_POSITION_KEY] ?? safeOverrides["background-position"] ?? safeComputed["background-position"],
+      BG_POSITION_OPTIONS,
+      "center"
+    );
+    const imageRepeat = normalizeEnumValue(
+      stored[BG_META_IMAGE_REPEAT_KEY] ?? safeOverrides["background-repeat"] ?? safeComputed["background-repeat"],
+      BG_REPEAT_OPTIONS,
+      "no-repeat"
+    );
+
+    return {
+      solid,
+      gradient,
+      imageEnabled,
+      imageUrl,
+      imageSize,
+      imagePosition,
+      imageRepeat,
+    };
+  }
+
+  function readBackgroundDraftFromControls() {
+    return {
+      solid: toHexColor(state.controls.backgroundSolidInput?.value, "#ffffff"),
+      gradient: String(state.controls.backgroundGradientInput?.value || "").trim(),
+      imageEnabled: Boolean(state.controls.backgroundImageToggle?.checked),
+      imageUrl: normalizeBackgroundImageUrl(state.controls.backgroundImageUrlInput?.value),
+      imageSize: normalizeEnumValue(state.controls.backgroundImageSizeInput?.value, BG_SIZE_OPTIONS, "cover"),
+      imagePosition: normalizeEnumValue(state.controls.backgroundImagePositionInput?.value, BG_POSITION_OPTIONS, "center"),
+      imageRepeat: normalizeEnumValue(state.controls.backgroundImageRepeatInput?.value, BG_REPEAT_OPTIONS, "no-repeat"),
+    };
+  }
+
+  function writeBackgroundDraftMeta(relId, draft) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+
+    const safeDraft = draft && typeof draft === "object" ? draft : {};
+    setStyleMetadataValue(safeRelId, BG_META_SOLID_KEY, String(safeDraft.solid || "").trim() || null);
+    setStyleMetadataValue(safeRelId, BG_META_GRADIENT_KEY, String(safeDraft.gradient || "").trim() || null);
+    setStyleMetadataValue(safeRelId, BG_META_IMAGE_ENABLED_KEY, Boolean(safeDraft.imageEnabled));
+    setStyleMetadataValue(safeRelId, BG_META_IMAGE_URL_KEY, String(safeDraft.imageUrl || "").trim() || null);
+    setStyleMetadataValue(safeRelId, BG_META_IMAGE_SIZE_KEY, String(safeDraft.imageSize || "").trim() || null);
+    setStyleMetadataValue(safeRelId, BG_META_IMAGE_POSITION_KEY, String(safeDraft.imagePosition || "").trim() || null);
+    setStyleMetadataValue(safeRelId, BG_META_IMAGE_REPEAT_KEY, String(safeDraft.imageRepeat || "").trim() || null);
+  }
+
+  function isStyleMetadataKey(property) {
+    return String(property || "").trim().startsWith("_");
+  }
+
+  function isStyleMetadataTrue(value) {
+    if (typeof value === "boolean") {
+      return value;
+    }
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized === "true" || normalized === "1" || normalized === "yes";
+  }
+
+  function setStyleMetadataValue(relId, key, value) {
+    const safeRelId = String(relId || "").trim();
+    const safeKey = String(key || "").trim();
+    if (!safeRelId || !safeKey || !isStyleMetadataKey(safeKey)) {
+      return;
+    }
+
+    if (!state.overridesMeta[safeRelId]) {
+      state.overridesMeta[safeRelId] = {};
+    }
+
+    if (value == null || (typeof value === "string" && value.trim() === "")) {
+      delete state.overridesMeta[safeRelId][safeKey];
+    } else {
+      state.overridesMeta[safeRelId][safeKey] = value;
+    }
+
+    if (Object.keys(state.overridesMeta[safeRelId]).length === 0) {
+      delete state.overridesMeta[safeRelId];
+    }
+  }
+
+  function clearStyleMetadataValue(relId, key) {
+    setStyleMetadataValue(relId, key, null);
+  }
+
   function isGradientValue(value) {
     return /gradient\s*\(/i.test(String(value || ""));
   }
@@ -4325,6 +5038,9 @@
     const overrideBackground = String(overrides.background ?? "").trim();
     const overrideBackgroundImage = String(overrides["background-image"] ?? "").trim();
     const computedBackgroundImage = String(computed["background-image"] ?? "").trim();
+    if (isBackgroundImageValue(overrideBackgroundImage)) {
+      return "image";
+    }
     if (isGradientValue(overrideBackgroundImage)) {
       return "gradient";
     }
@@ -4336,6 +5052,9 @@
     }
     if (!overrideBackground && isGradientValue(computedBackgroundImage)) {
       return "gradient";
+    }
+    if (isBackgroundImageValue(computedBackgroundImage)) {
+      return "image";
     }
     return "solid";
   }

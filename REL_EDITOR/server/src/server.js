@@ -310,6 +310,46 @@ async function main() {
     });
   });
 
+  app.post("/api/upload-background-image", (req, res) => {
+    upload.single("image")(req, res, async (uploadError) => {
+      if (uploadError) {
+        res.status(400).json({ ok: false, error: uploadError.message || "Upload failed" });
+        return;
+      }
+
+      try {
+        if (!req.file) {
+          throw new Error("No image file provided");
+        }
+
+        if (!req.file.mimetype || !req.file.mimetype.startsWith("image/")) {
+          throw new Error("File must be an image");
+        }
+
+        const extension = resolveImageExtension(req.file.originalname, req.file.mimetype);
+        const filename = `bg-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${extension}`;
+        const storage = resolveBackgroundAssetStorage({
+          projectRoot: currentProjectRoot,
+          projectType: currentProjectType,
+          indexPath: currentIndexPath,
+          fileName: filename,
+        });
+
+        await fs.mkdir(storage.assetsDir, { recursive: true });
+        await fs.writeFile(storage.targetPath, req.file.buffer);
+
+        res.json({
+          ok: true,
+          css_url: storage.cssUrl,
+          relative_path: storage.relativePath,
+          file_name: filename,
+        });
+      } catch (error) {
+        res.status(400).json({ ok: false, error: error.message });
+      }
+    });
+  });
+
   app.use(async (req, res, next) => {
     try {
       if (!shouldProxyViteRequest(req)) {
@@ -638,6 +678,47 @@ function resolveImageExtension(originalName, mimeType) {
   };
 
   return mimeToExt[mimeType] || ".png";
+}
+
+function resolveBackgroundAssetStorage(options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const projectRoot = String(opts.projectRoot || "").trim();
+  const fileName = String(opts.fileName || "").trim();
+  const projectType = normalizeProjectType(opts.projectType || PROJECT_TYPE_STATIC);
+  const indexPath = String(opts.indexPath || "index.html").replace(/\\/g, "/");
+
+  if (!projectRoot || !fileName) {
+    throw new Error("Background asset storage requires project root and file name");
+  }
+
+  if (projectType === PROJECT_TYPE_VITE_REACT_STYLE) {
+    const relativePath = `public/rel_assets/${fileName}`;
+    const assetsDir = path.join(projectRoot, "public", "rel_assets");
+    return {
+      assetsDir,
+      targetPath: path.join(assetsDir, fileName),
+      relativePath,
+      cssUrl: `/rel_assets/${fileName}`,
+    };
+  }
+
+  const staticRelativePath = `REL_assets/${fileName}`;
+  const assetsDir = path.join(projectRoot, "REL_assets");
+  return {
+    assetsDir,
+    targetPath: path.join(assetsDir, fileName),
+    relativePath: staticRelativePath,
+    cssUrl: computeCssRelativePathFromIndex(indexPath, staticRelativePath),
+  };
+}
+
+function computeCssRelativePathFromIndex(indexPath, assetRelativePath) {
+  const safeIndexPath = String(indexPath || "index.html").replace(/\\/g, "/");
+  const safeAssetPath = String(assetRelativePath || "").replace(/\\/g, "/");
+  const indexDir = path.posix.dirname(safeIndexPath);
+  const fromDir = indexDir === "." ? "" : indexDir;
+  const relative = path.posix.relative(fromDir, safeAssetPath);
+  return relative || safeAssetPath;
 }
 
 function normalizeDefaultsLibraries(value) {

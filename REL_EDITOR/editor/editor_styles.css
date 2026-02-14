@@ -560,6 +560,17 @@ button:hover {
   margin-top: 6px;
 }
 
+.background-image-group {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.background-image-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .font-loading-warning {
   margin-top: 8px;
   padding: 7px;
@@ -617,6 +628,22 @@ button:hover {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px;
+}
+
+.control-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.control-inline-actions input {
+  min-width: 0;
+}
+
+.control-inline-actions button {
+  padding: 6px 8px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .control-item.control-item-stacked {

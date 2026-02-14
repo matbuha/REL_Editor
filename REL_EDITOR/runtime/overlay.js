@@ -33,6 +33,8 @@
     "width",
     "height",
     "display",
+    "position",
+    "z-index",
     "gap",
     "flex-direction",
     "justify-content",

@@ -347,7 +347,7 @@ function buildStableOverrideCssWithReport(rawPatch) {
     const props = ensurePlainObject(overridesMeta[relId]);
     const entries = Object.entries(props)
       .map(([property, value]) => [String(property || "").trim(), normalizeRgbaAlphaInCssValue(String(value ?? ""))])
-      .filter(([property, value]) => property && String(value).trim() !== "");
+      .filter(([property, value]) => property && !isStyleMetadataProperty(property) && String(value).trim() !== "");
     if (entries.length === 0) {
       continue;
     }
@@ -522,6 +522,10 @@ function normalizeSelectorValue(value) {
     return "";
   }
   return selector;
+}
+
+function isStyleMetadataProperty(property) {
+  return String(property || "").trim().startsWith("_");
 }
 
 function normalizeRgbaAlphaInCssValue(value) {
