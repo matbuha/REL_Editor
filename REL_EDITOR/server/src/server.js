@@ -5,6 +5,7 @@ const { URL } = require("url");
 const express = require("express");
 const multer = require("multer");
 const mime = require("mime-types");
+const { WebSocketServer, WebSocket } = require("ws");
 const { injectRuntimeAssets } = require("./inject");
 const {
   fileExists,
@@ -38,6 +39,55 @@ async function main() {
   const defaultsFonts = normalizeDefaultsFonts(config.defaultsFonts);
   const defaultTheme = createDefaultTheme();
   const viteRunner = new DevServerManager({ defaultDevUrl: currentDevUrl });
+  let viteStatus = buildViteStatusSnapshot(viteRunner.getStatus(), currentDevUrl);
+  const wsClients = new Set();
+
+  await ensureRelEditorArtifacts({
+    projectRoot: currentProjectRoot,
+    projectType: currentProjectType,
+    indexPath: currentIndexPath,
+    devUrl: currentDevUrl,
+    defaultsLibraries,
+    defaultsFonts,
+    defaultTheme,
+  });
+
+  function broadcastViteStatus() {
+    if (wsClients.size === 0) {
+      return;
+    }
+    const message = JSON.stringify({
+      type: "viteStatus",
+      payload: viteStatus,
+    });
+    for (const client of wsClients) {
+      if (!client || client.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      client.send(message);
+    }
+  }
+
+  function publishViteStatus(nextStatus, options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const normalized = normalizeViteStatusSnapshot(nextStatus);
+    if (!opts.force && isViteStatusSnapshotEqual(viteStatus, normalized)) {
+      return false;
+    }
+    viteStatus = {
+      ...normalized,
+      updatedAt: Date.now(),
+    };
+    broadcastViteStatus();
+    return true;
+  }
+
+  function publishViteStatusFromRunner(runnerStatus) {
+    const status = runnerStatus && typeof runnerStatus === "object"
+      ? runnerStatus
+      : viteRunner.getStatus();
+    return publishViteStatus(buildViteStatusSnapshot(status, currentDevUrl));
+  }
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -70,6 +120,7 @@ async function main() {
       dev_url: safeDevUrl,
       iframe_src: iframeSrc,
       vite_status: viteStatus,
+      vite_status_stream: viteStatus,
       external_styles: externalStyles,
       external_scripts: externalScripts,
       defaults_libraries: defaultsLibraries,
@@ -78,7 +129,20 @@ async function main() {
   }
 
   app.get("/api/project", async (req, res) => {
-    res.json(buildProjectPayload());
+    try {
+      await ensureRelEditorArtifacts({
+        projectRoot: currentProjectRoot,
+        projectType: currentProjectType,
+        indexPath: currentIndexPath,
+        devUrl: currentDevUrl,
+        defaultsLibraries,
+        defaultsFonts,
+        defaultTheme,
+      });
+      res.json(buildProjectPayload());
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.post("/api/project", async (req, res) => {
@@ -107,12 +171,29 @@ async function main() {
       const switchedToStatic = requestedType === PROJECT_TYPE_STATIC && currentProjectType !== PROJECT_TYPE_STATIC;
       if (rootChanged || switchedToStatic) {
         await viteRunner.stop();
+        publishViteStatus({
+          state: "stopped",
+          url: currentDevUrl,
+          port: null,
+          pid: null,
+          message: null,
+        });
       }
 
       currentProjectRoot = requestedRoot;
       currentIndexPath = requestedIndex;
       currentProjectType = requestedType;
       currentDevUrl = requestedDevUrl;
+      await ensureRelEditorArtifacts({
+        projectRoot: currentProjectRoot,
+        projectType: currentProjectType,
+        indexPath: currentIndexPath,
+        devUrl: currentDevUrl,
+        defaultsLibraries,
+        defaultsFonts,
+        defaultTheme,
+      });
+      publishViteStatusFromRunner();
 
       res.json({
         ok: true,
@@ -126,11 +207,13 @@ async function main() {
   app.get("/api/vite/status", (req, res) => {
     const status = viteRunner.getStatus();
     const safeDevUrl = normalizeDevUrl(status.dev_url || currentDevUrl);
+    publishViteStatusFromRunner(status);
     res.json({
       ok: true,
       project_type: currentProjectType,
       dev_url: safeDevUrl,
       vite_status: status,
+      vite_status_stream: viteStatus,
     });
   });
 
@@ -146,6 +229,22 @@ async function main() {
       currentProjectRoot = requestedRoot;
       currentProjectType = PROJECT_TYPE_VITE_REACT_STYLE;
       currentDevUrl = normalizeDevUrl(body.dev_url || currentDevUrl || DEFAULT_VITE_DEV_URL);
+      await ensureRelEditorArtifacts({
+        projectRoot: currentProjectRoot,
+        projectType: currentProjectType,
+        indexPath: currentIndexPath,
+        devUrl: currentDevUrl,
+        defaultsLibraries,
+        defaultsFonts,
+        defaultTheme,
+      });
+      publishViteStatus({
+        state: "starting",
+        url: currentDevUrl,
+        port: null,
+        pid: null,
+        message: null,
+      });
 
       const viteStatus = await viteRunner.start({
         projectRoot: currentProjectRoot,
@@ -156,6 +255,7 @@ async function main() {
         currentProjectRoot = resolvedRoot;
       }
       currentDevUrl = normalizeDevUrl(viteStatus.dev_url || currentDevUrl);
+      publishViteStatusFromRunner(viteStatus);
       console.log(`[REL VITE] Dev server running at ${currentDevUrl} (root: ${currentProjectRoot})`);
 
       res.json({
@@ -167,6 +267,13 @@ async function main() {
       });
     } catch (error) {
       console.error(`[REL VITE] Failed to start dev server: ${error.message}`);
+      publishViteStatus({
+        state: "error",
+        url: currentDevUrl,
+        port: null,
+        pid: null,
+        message: String(error.message || "Failed to start Vite dev server"),
+      });
       res.status(400).json({
         ok: false,
         error: error.message,
@@ -178,6 +285,13 @@ async function main() {
   app.post("/api/vite/stop", async (req, res) => {
     try {
       await viteRunner.stop();
+      publishViteStatus({
+        state: "stopped",
+        url: currentDevUrl,
+        port: null,
+        pid: null,
+        message: null,
+      });
       console.log("[REL VITE] Dev server stopped");
       res.json({
         ok: true,
@@ -187,6 +301,13 @@ async function main() {
         vite_status: viteRunner.getStatus(),
       });
     } catch (error) {
+      publishViteStatus({
+        state: "error",
+        url: currentDevUrl,
+        port: null,
+        pid: null,
+        message: String(error.message || "Failed to stop Vite dev server"),
+      });
       res.status(400).json({
         ok: false,
         error: error.message,
@@ -571,6 +692,28 @@ async function main() {
     console.log(`Project root: ${currentProjectRoot}`);
     console.log(`Index path: ${currentIndexPath}`);
   });
+  const wsServer = new WebSocketServer({
+    server: httpServer,
+    path: "/ws",
+  });
+  wsServer.on("connection", (socket) => {
+    wsClients.add(socket);
+    socket.send(JSON.stringify({
+      type: "viteStatus",
+      payload: viteStatus,
+    }));
+    socket.on("close", () => {
+      wsClients.delete(socket);
+    });
+    socket.on("error", () => {
+      wsClients.delete(socket);
+    });
+  });
+
+  const viteStatusWatchTimer = setInterval(() => {
+    publishViteStatusFromRunner();
+  }, 750);
+  publishViteStatusFromRunner();
 
   let shuttingDown = false;
   async function shutdown() {
@@ -578,6 +721,18 @@ async function main() {
       return;
     }
     shuttingDown = true;
+    clearInterval(viteStatusWatchTimer);
+    for (const client of wsClients) {
+      try {
+        client.close();
+      } catch {
+        // Ignore cleanup errors.
+      }
+    }
+    wsClients.clear();
+    await new Promise((resolve) => {
+      wsServer.close(() => resolve());
+    });
     await viteRunner.dispose();
     httpServer.close(() => {
       process.exit(0);
@@ -719,6 +874,128 @@ function computeCssRelativePathFromIndex(indexPath, assetRelativePath) {
   const fromDir = indexDir === "." ? "" : indexDir;
   const relative = path.posix.relative(fromDir, safeAssetPath);
   return relative || safeAssetPath;
+}
+
+async function ensureRelEditorArtifacts(options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const projectRoot = String(opts.projectRoot || "").trim();
+  if (!projectRoot) {
+    throw new Error("projectRoot is required for rel_editor artifacts");
+  }
+
+  const relEditorDir = path.join(projectRoot, "rel_editor");
+  const patchPath = path.join(relEditorDir, "patch.json");
+  const overridePath = path.join(relEditorDir, "override.css");
+
+  await fs.mkdir(relEditorDir, { recursive: true });
+
+  if (!(await fileExists(overridePath))) {
+    await fs.writeFile(overridePath, "", "utf8");
+  }
+
+  if (await fileExists(patchPath)) {
+    return;
+  }
+
+  const patchData = buildDefaultPatchData({
+    projectRoot,
+    projectType: opts.projectType,
+    indexPath: opts.indexPath,
+    devUrl: opts.devUrl,
+    defaultsLibraries: opts.defaultsLibraries,
+    defaultsFonts: opts.defaultsFonts,
+    defaultTheme: opts.defaultTheme,
+  });
+  await fs.writeFile(patchPath, JSON.stringify(patchData, null, 2), "utf8");
+}
+
+function buildDefaultPatchData(options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const defaultsLibraries = normalizeDefaultsLibraries(opts.defaultsLibraries || {});
+  const defaultsFonts = normalizeDefaultsFonts(opts.defaultsFonts || {});
+  const defaultTheme = opts.defaultTheme && typeof opts.defaultTheme === "object"
+    ? opts.defaultTheme
+    : createDefaultTheme();
+  return {
+    version: 4,
+    project_root: String(opts.projectRoot || "").trim(),
+    project_type: normalizeProjectType(opts.projectType || PROJECT_TYPE_STATIC),
+    index_path: String(opts.indexPath || "index.html").replace(/\\/g, "/"),
+    dev_url: normalizeDevUrl(opts.devUrl || DEFAULT_VITE_DEV_URL),
+    elementsMap: {},
+    selectorMap: {},
+    attributeOverrides: {},
+    textOverrides: {},
+    overridesMeta: {},
+    attributesMeta: {},
+    linksMeta: {},
+    addedNodes: [],
+    deletedNodes: [],
+    runtimeLibraries: defaultsLibraries,
+    runtimeFonts: defaultsFonts,
+    theme: JSON.parse(JSON.stringify(defaultTheme)),
+  };
+}
+
+function buildViteStatusSnapshot(status, fallbackUrl) {
+  const raw = status && typeof status === "object" ? status : {};
+  let state = "stopped";
+  if (Boolean(raw.running)) {
+    state = "running";
+  } else if (Boolean(raw.starting) || Boolean(raw.installing) || ["starting", "installing"].includes(String(raw.phase || "").toLowerCase())) {
+    state = "starting";
+  } else if (String(raw.last_error || "").trim()) {
+    state = "error";
+  }
+
+  return normalizeViteStatusSnapshot({
+    state,
+    url: raw.dev_url || fallbackUrl || null,
+    port: raw.port,
+    pid: raw.pid,
+    message: state === "error" ? raw.last_error : null,
+  });
+}
+
+function normalizeViteStatusSnapshot(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const state = normalizeViteStatusState(raw.state);
+  const parsedPort = Number(raw.port);
+  const parsedPid = Number(raw.pid);
+  const hasUrl = raw.url != null && String(raw.url).trim() !== "";
+  const url = hasUrl ? normalizeDevUrl(raw.url) : null;
+  const message = normalizeOptionalMessage(raw.message);
+  return {
+    state,
+    url,
+    port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : null,
+    pid: Number.isFinite(parsedPid) && parsedPid > 0 ? parsedPid : null,
+    message: message || null,
+    updatedAt: Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : Date.now(),
+  };
+}
+
+function normalizeViteStatusState(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["stopped", "starting", "running", "error"].includes(normalized)) {
+    return normalized;
+  }
+  return "stopped";
+}
+
+function normalizeOptionalMessage(value) {
+  const normalized = String(value || "").trim();
+  return normalized || null;
+}
+
+function isViteStatusSnapshotEqual(left, right) {
+  const a = normalizeViteStatusSnapshot(left);
+  const b = normalizeViteStatusSnapshot(right);
+  return a.state === b.state
+    && a.url === b.url
+    && a.port === b.port
+    && a.pid === b.pid
+    && a.message === b.message;
 }
 
 function normalizeDefaultsLibraries(value) {

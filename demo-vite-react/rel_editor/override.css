@@ -1,0 +1,16 @@
+[data-rel-id="rel-added-mlmh8n7w-72aqjj"] {
+  width: 100vh;
+  box-sizing: border-box;
+  height: 50vh;
+  z-index: 1;
+  position: relative;
+  background-image: url("/rel_assets/bg-1771083379957-7341b5e4fd9b.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+[data-rel-id="rel-mlmh7jpf-1"] {
+  flex-direction: column;
+  justify-content: center;
+}

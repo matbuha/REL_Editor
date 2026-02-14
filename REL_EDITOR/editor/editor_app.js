@@ -178,6 +178,7 @@
   const PROJECT_TYPE_STATIC = "static-html";
   const PROJECT_TYPE_VITE_REACT_STYLE = "vite-react-style";
   const DEFAULT_VITE_DEV_URL = "http://localhost:5173";
+  const VITE_STATUS_WS_RETRY_STEPS_MS = [1000, 2000, 5000, 10000];
   const CARD_CENTER_TRIGGER_PROPS = new Set(["justify-content", "align-items"]);
   const VITE_GLOBAL_TARGET_PROPS = ["background", "background-color", "background-image", "color"];
   const LAYER_ORDER_MIN = 0;
@@ -255,7 +256,12 @@
     lastSelection: null,
     lastTreeSnapshot: [],
     overlayReady: false,
-    viteStatusPollTimer: null,
+    viteStatusSocket: null,
+    viteStatusSocketUrl: "",
+    viteStatusReconnectTimer: null,
+    viteStatusReconnectAttempt: 0,
+    viteStatusConnectionLost: false,
+    viteStatusManualClose: false,
     layout: {
       leftPx: null,
       rightPx: null,
@@ -418,18 +424,16 @@
     syncFontControlsFromState();
     syncThemeUiFromState();
     buildAddPanel();
+    ensureViteStatusSocket();
     loadIframe();
-    syncViteStatusPolling();
   }
 
   function bindEvents() {
     window.addEventListener("message", onMessageFromOverlay);
     window.addEventListener("keydown", onEditorKeyDown, true);
     window.addEventListener("beforeunload", () => {
-      if (state.viteStatusPollTimer) {
-        clearInterval(state.viteStatusPollTimer);
-        state.viteStatusPollTimer = null;
-      }
+      closeViteStatusSocket({ manual: true });
+      clearViteStatusReconnectTimer();
     });
 
     dom.projectTypeSelect.addEventListener("change", () => {
@@ -2587,7 +2591,7 @@
     state.projectType = normalizeProjectType(data.project_type);
     state.indexPath = data.index_path;
     state.devUrl = normalizeDevUrl(data.dev_url);
-    state.viteStatus = normalizeViteStatus(data.vite_status, state.devUrl);
+    state.viteStatus = normalizeViteStatus(data.vite_status_stream || data.vite_status, state.devUrl);
     state.defaultsLibraries = normalizeRuntimeLibraries(data.defaults_libraries || {});
     state.runtimeLibraries = { ...state.defaultsLibraries };
     state.defaultsFonts = normalizeRuntimeFonts(data.defaults_fonts || {});
@@ -2603,6 +2607,7 @@
     dom.devUrlInput.value = state.devUrl;
     clearExportReport();
     renderViteStatus();
+    ensureViteStatusSocket();
     setStatus(`Loaded project: ${data.project_root}`);
   }
 
@@ -2631,7 +2636,7 @@
     state.projectType = normalizeProjectType(data.project_type);
     state.indexPath = data.index_path;
     state.devUrl = normalizeDevUrl(data.dev_url);
-    state.viteStatus = normalizeViteStatus(data.vite_status, state.devUrl);
+    state.viteStatus = normalizeViteStatus(data.vite_status_stream || data.vite_status, state.devUrl);
     state.defaultsLibraries = normalizeRuntimeLibraries(data.defaults_libraries || {});
     state.runtimeLibraries = { ...state.defaultsLibraries };
     state.defaultsFonts = normalizeRuntimeFonts(data.defaults_fonts || {});
@@ -2660,6 +2665,7 @@
     syncProjectTypeUi();
     clearExportReport();
     renderViteStatus();
+    ensureViteStatusSocket();
     await loadPatchInfo();
     syncLibraryControlsFromState();
     syncFontControlsFromState();
@@ -2692,7 +2698,6 @@
     dom.indexPathInput.disabled = isVite;
     dom.devUrlInput.disabled = !isVite;
     renderViteStatus();
-    syncViteStatusPolling();
     if (!isVite) {
       clearExportReport();
     }
@@ -2724,18 +2729,43 @@
 
   function normalizeViteStatus(value, fallbackUrl) {
     const raw = value && typeof value === "object" ? value : {};
-    const devUrl = normalizeDevUrl(raw.dev_url || raw.devUrl || fallbackUrl || DEFAULT_VITE_DEV_URL);
+    const streamState = String(raw.state || "").trim().toLowerCase();
+    const hasStreamState = ["stopped", "starting", "running", "error"].includes(streamState);
+    const devUrl = normalizeDevUrl(
+      raw.url || raw.dev_url || raw.devUrl || fallbackUrl || DEFAULT_VITE_DEV_URL
+    );
     const parsedPort = Number(raw.port);
     const preferredPort = Number(raw.preferred_port || raw.preferredPort);
     const pid = Number(raw.pid);
     const logLines = Array.isArray(raw.log_lines)
       ? raw.log_lines.map((line) => String(line || "").trim()).filter(Boolean)
       : (Array.isArray(raw.logLines) ? raw.logLines.map((line) => String(line || "").trim()).filter(Boolean) : []);
+
+    let running = Boolean(raw.running);
+    let installing = Boolean(raw.installing);
+    let starting = Boolean(raw.starting);
+    let phase = String(raw.phase || "").trim().toLowerCase() || "stopped";
+    let lastError = String(raw.last_error || raw.lastError || "").trim();
+    if (hasStreamState) {
+      running = streamState === "running";
+      installing = false;
+      starting = streamState === "starting";
+      if (streamState === "error") {
+        phase = "failed";
+        lastError = String(raw.message || raw.last_error || raw.lastError || "").trim();
+      } else {
+        phase = streamState;
+        if (streamState !== "stopped") {
+          lastError = "";
+        }
+      }
+    }
+
     return {
-      running: Boolean(raw.running),
-      installing: Boolean(raw.installing),
-      starting: Boolean(raw.starting),
-      phase: String(raw.phase || "").trim().toLowerCase() || "stopped",
+      running,
+      installing,
+      starting,
+      phase,
       port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : null,
       preferredPort: Number.isFinite(preferredPort) && preferredPort > 0 ? preferredPort : null,
       portAutoSelected: Boolean(
@@ -2744,7 +2774,7 @@
           : raw.portAutoSelected
       ),
       pid: Number.isFinite(pid) && pid > 0 ? pid : null,
-      lastError: String(raw.last_error || raw.lastError || "").trim(),
+      lastError,
       logLines,
       projectRoot: String(raw.project_root || raw.projectRoot || state.projectRoot || "").trim(),
       devUrl,
@@ -2816,53 +2846,139 @@
     dom.viteLogText.classList.remove("hidden");
   }
 
-  function syncViteStatusPolling() {
-    const shouldPoll = state.projectType === PROJECT_TYPE_VITE_REACT_STYLE;
-    if (shouldPoll && !state.viteStatusPollTimer) {
-      state.viteStatusPollTimer = window.setInterval(() => {
-        refreshViteStatus().catch(() => {});
-      }, 1500);
-      refreshViteStatus().catch(() => {});
-      return;
-    }
-    if (!shouldPoll && state.viteStatusPollTimer) {
-      clearInterval(state.viteStatusPollTimer);
-      state.viteStatusPollTimer = null;
-    }
+  function resolveViteStatusSocketUrl() {
+    const wsUrl = new URL(window.location.href);
+    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+    wsUrl.pathname = "/ws";
+    wsUrl.search = "";
+    wsUrl.hash = "";
+    return wsUrl.toString();
   }
 
-  async function refreshViteStatus() {
-    if (state.projectType !== PROJECT_TYPE_VITE_REACT_STYLE) {
+  function clearViteStatusReconnectTimer() {
+    if (!state.viteStatusReconnectTimer) {
+      return;
+    }
+    clearTimeout(state.viteStatusReconnectTimer);
+    state.viteStatusReconnectTimer = null;
+  }
+
+  function closeViteStatusSocket(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    state.viteStatusManualClose = Boolean(opts.manual);
+    const socket = state.viteStatusSocket;
+    if (!socket) {
       return;
     }
     try {
-      const response = await fetch("/api/vite/status");
-      if (!response.ok) {
+      socket.close();
+    } catch {
+      // Ignore close errors.
+    }
+  }
+
+  function scheduleViteStatusSocketReconnect() {
+    clearViteStatusReconnectTimer();
+    const attempt = state.viteStatusReconnectAttempt;
+    const delayIndex = Math.min(attempt, VITE_STATUS_WS_RETRY_STEPS_MS.length - 1);
+    const delayMs = VITE_STATUS_WS_RETRY_STEPS_MS[delayIndex] || 10000;
+    state.viteStatusReconnectAttempt = attempt + 1;
+    state.viteStatusReconnectTimer = window.setTimeout(() => {
+      state.viteStatusReconnectTimer = null;
+      ensureViteStatusSocket();
+    }, delayMs);
+  }
+
+  function handleViteStatusSocketMessage(rawData) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(String(rawData || ""));
+    } catch {
+      return;
+    }
+    if (!parsed || parsed.type !== "viteStatus" || !parsed.payload || typeof parsed.payload !== "object") {
+      return;
+    }
+
+    const nextStatus = normalizeViteStatus(parsed.payload, state.devUrl);
+    const prevRunning = Boolean(state.viteStatus && state.viteStatus.running);
+    const nextRunning = Boolean(nextStatus.running);
+    state.viteStatus = nextStatus;
+    if (nextStatus.devUrl && nextStatus.devUrl !== state.devUrl) {
+      state.devUrl = nextStatus.devUrl;
+      dom.devUrlInput.value = state.devUrl;
+    }
+    renderViteStatus();
+    if (nextRunning && !prevRunning) {
+      setStatus(`Vite dev server running: ${state.devUrl}`);
+    }
+    if (!nextRunning && prevRunning) {
+      setStatus(nextStatus.lastError || "Vite dev server stopped", Boolean(nextStatus.lastError));
+    }
+  }
+
+  function ensureViteStatusSocket(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    if (!window.WebSocket) {
+      return;
+    }
+
+    const targetUrl = resolveViteStatusSocketUrl();
+    const currentSocket = state.viteStatusSocket;
+    const currentIsActive = Boolean(
+      currentSocket
+      && [window.WebSocket.OPEN, window.WebSocket.CONNECTING].includes(currentSocket.readyState)
+    );
+    if (!opts.forceReconnect && currentIsActive && state.viteStatusSocketUrl === targetUrl) {
+      return;
+    }
+
+    clearViteStatusReconnectTimer();
+    if (currentSocket) {
+      closeViteStatusSocket({ manual: true });
+    }
+
+    const socket = new window.WebSocket(targetUrl);
+    state.viteStatusSocket = socket;
+    state.viteStatusSocketUrl = targetUrl;
+    state.viteStatusManualClose = false;
+
+    socket.addEventListener("open", () => {
+      if (state.viteStatusSocket !== socket) {
         return;
       }
-      const data = await response.json();
-      const nextStatus = normalizeViteStatus(data.vite_status || {}, state.devUrl);
-      const prevRunning = Boolean(state.viteStatus && state.viteStatus.running);
-      const nextRunning = Boolean(nextStatus.running);
-      state.viteStatus = nextStatus;
+      state.viteStatusReconnectAttempt = 0;
+      state.viteStatusConnectionLost = false;
+    });
 
-      const incomingDevUrl = normalizeDevUrl(data.dev_url || nextStatus.devUrl || state.devUrl);
-      const devUrlChanged = incomingDevUrl !== state.devUrl;
-      if (devUrlChanged) {
-        state.devUrl = incomingDevUrl;
-        dom.devUrlInput.value = state.devUrl;
+    socket.addEventListener("message", (event) => {
+      if (state.viteStatusSocket !== socket) {
+        return;
       }
+      handleViteStatusSocketMessage(event.data);
+    });
 
-      renderViteStatus();
-      if (nextRunning && !prevRunning) {
-        setStatus(`Vite dev server running: ${state.devUrl}`);
+    socket.addEventListener("close", () => {
+      if (state.viteStatusSocket !== socket) {
+        return;
       }
-      if (!nextRunning && prevRunning) {
-        setStatus(nextStatus.lastError || "Vite dev server stopped", Boolean(nextStatus.lastError));
+      state.viteStatusSocket = null;
+      state.viteStatusSocketUrl = "";
+      const wasManual = Boolean(state.viteStatusManualClose);
+      state.viteStatusManualClose = false;
+      if (wasManual) {
+        return;
       }
-    } catch {
-      // Polling errors should not block the editor UI.
-    }
+      if (!state.viteStatusConnectionLost) {
+        state.viteStatusConnectionLost = true;
+        setStatus("Status connection lost", true);
+      }
+      scheduleViteStatusSocketReconnect();
+    });
+
+    socket.addEventListener("error", () => {
+      // Close event handles reconnection.
+    });
   }
 
   async function startViteDevServer() {
@@ -2901,14 +3017,13 @@
       state.projectRoot = String(data.project_root || state.projectRoot || "").trim();
       state.projectType = normalizeProjectType(data.project_type || PROJECT_TYPE_VITE_REACT_STYLE);
       state.devUrl = normalizeDevUrl(data.dev_url || dom.devUrlInput.value);
-      state.viteStatus = normalizeViteStatus(data.vite_status, state.devUrl);
       dom.projectRootInput.value = state.projectRoot;
       dom.projectTypeSelect.value = state.projectType;
       dom.devUrlInput.value = state.devUrl;
       syncProjectTypeUi();
+      ensureViteStatusSocket();
       loadIframe();
-      setStatus(`Vite dev server running: ${state.devUrl}`);
-      refreshViteStatus().catch(() => {});
+      setStatus("Vite dev server start requested");
     } catch (error) {
       state.viteStatus = {
         ...state.viteStatus,
@@ -2943,15 +3058,14 @@
 
       state.projectType = normalizeProjectType(data.project_type || state.projectType);
       state.devUrl = normalizeDevUrl(data.dev_url || state.devUrl);
-      state.viteStatus = normalizeViteStatus(data.vite_status, state.devUrl);
       dom.projectTypeSelect.value = state.projectType;
       dom.devUrlInput.value = state.devUrl;
       syncProjectTypeUi();
+      ensureViteStatusSocket();
       if (state.projectType === PROJECT_TYPE_VITE_REACT_STYLE) {
         loadIframe();
       }
-      setStatus("Vite dev server stopped");
-      refreshViteStatus().catch(() => {});
+      setStatus("Vite dev server stop requested");
     } catch (error) {
       setStatus(`Failed to stop Vite dev server: ${error.message}`, true);
     }
