@@ -6,6 +6,8 @@ const { PROJECT_TYPE_VITE_REACT_STYLE, normalizeProjectType } = require("./vite_
 
 const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV", "SECTION"]);
 const LINK_ATTRIBUTE_KEYS = ["href", "target", "rel", "title"];
+const VOID_TAGS = new Set(["IMG", "INPUT", "BR", "HR", "META", "LINK", "SOURCE", "TRACK", "WBR"]);
+const PROTECTED_TAGS = new Set(["HTML", "HEAD"]);
 
 async function exportSafe(projectRoot, indexPath, options) {
   const opts = options && typeof options === "object" ? options : {};
@@ -168,21 +170,17 @@ function applyHtmlOverrides(document, patch) {
   }
 
   const selectorMap = buildSelectorMapForExport(patch);
-  applyAttributeOverridesToDocument(document, patch, selectorMap);
-  applyTextOverridesToDocument(document, patch, selectorMap);
+  const relElementMap = new Map();
+  applyStructuralOpsToDocument(document, patch, selectorMap, relElementMap);
+  applyAttributeOverridesToDocument(document, patch, selectorMap, relElementMap);
+  applyTextOverridesToDocument(document, patch, selectorMap, relElementMap);
 }
 
-function applyAttributeOverridesToDocument(document, patch, selectorMap) {
+function applyAttributeOverridesToDocument(document, patch, selectorMap, relElementMap) {
   const attributeOverrides = buildAttributeOverridesForExport(patch);
   const relIds = Object.keys(attributeOverrides);
   for (const relId of relIds) {
-    const selector = resolveExportSelector(relId, selectorMap, patch);
-    if (!selector) {
-      console.warn(`[REL export] Missing selector for attribute override relId "${relId}". Skipping.`);
-      continue;
-    }
-
-    const element = selectSingleNode(document, selector, relId, "attribute override");
+    const element = resolveElementForExportOperation(document, relId, selectorMap, patch, relElementMap, "attribute override");
     if (!element) {
       continue;
     }
@@ -202,17 +200,11 @@ function applyAttributeOverridesToDocument(document, patch, selectorMap) {
   }
 }
 
-function applyTextOverridesToDocument(document, patch, selectorMap) {
+function applyTextOverridesToDocument(document, patch, selectorMap, relElementMap) {
   const textOverrides = normalizeTextOverridesForExport(patch.textOverrides || patch.text_overrides);
   const relIds = Object.keys(textOverrides);
   for (const relId of relIds) {
-    const selector = resolveExportSelector(relId, selectorMap, patch);
-    if (!selector) {
-      console.warn(`[REL export] Missing selector for text override relId "${relId}". Skipping.`);
-      continue;
-    }
-
-    const element = selectSingleNode(document, selector, relId, "text override");
+    const element = resolveElementForExportOperation(document, relId, selectorMap, patch, relElementMap, "text override");
     if (!element) {
       continue;
     }
@@ -225,6 +217,449 @@ function applyTextOverridesToDocument(document, patch, selectorMap) {
 
     element.textContent = String(textOverrides[relId].text || "");
   }
+}
+
+function applyStructuralOpsToDocument(document, patch, selectorMap, relElementMap) {
+  const addedNodes = normalizeAddedNodesForExport(patch.addedNodes || patch.added_nodes);
+  for (const node of addedNodes) {
+    applyAddedNodeForExport(document, node, selectorMap, patch, relElementMap);
+  }
+
+  const movedNodes = normalizeMovedNodesForExport(patch.movedNodes || patch.moved_nodes);
+  for (const moveOp of movedNodes) {
+    applyMovedNodeForExport(document, moveOp, selectorMap, patch, relElementMap);
+  }
+
+  const deletedNodes = normalizeDeletedNodesForExport(patch.deletedNodes || patch.deleted_nodes);
+  for (const node of deletedNodes) {
+    applyDeletedNodeForExport(document, node, selectorMap, patch, relElementMap);
+  }
+}
+
+function normalizeAddedNodesForExport(value) {
+  const raw = Array.isArray(value) ? value : [];
+  const result = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const type = String(item.type || "").trim().toLowerCase();
+    if (!type) {
+      continue;
+    }
+    result.push({
+      nodeId: String(item.nodeId || "").trim(),
+      relId: String(item.relId || "").trim(),
+      parentRelId: String(item.parentRelId || "").trim(),
+      parentFallbackSelector: String(item.parentFallbackSelector || "").trim(),
+      type,
+      props: ensurePlainObject(item.props),
+    });
+  }
+  return result;
+}
+
+function normalizeDeletedNodesForExport(value) {
+  const raw = Array.isArray(value) ? value : [];
+  const result = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const relId = String(item.relId || "").trim();
+    const fallbackSelector = String(item.fallbackSelector || "").trim();
+    if (!relId && !fallbackSelector) {
+      continue;
+    }
+    result.push({
+      relId,
+      fallbackSelector,
+    });
+  }
+  return result;
+}
+
+function normalizeMovedNodesForExport(value) {
+  const raw = Array.isArray(value) ? value : [];
+  const result = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const sourceRelId = String(item.sourceRelId || item.relId || "").trim();
+    const targetRelId = String(item.targetRelId || "").trim();
+    if (!sourceRelId || !targetRelId) {
+      continue;
+    }
+    result.push({
+      sourceRelId,
+      targetRelId,
+      placement: normalizeMovePlacementForExport(item.placement),
+      sourceFallbackSelector: String(item.sourceFallbackSelector || item.fallbackSelector || "").trim(),
+      targetFallbackSelector: String(item.targetFallbackSelector || "").trim(),
+    });
+  }
+  return result;
+}
+
+function normalizeMovePlacementForExport(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "before" || normalized === "after" || normalized === "inside") {
+    return normalized;
+  }
+  return "inside";
+}
+
+function applyAddedNodeForExport(document, node, selectorMap, patch, relElementMap) {
+  const parent = resolveElementForExportOperation(
+    document,
+    node.parentRelId,
+    selectorMap,
+    patch,
+    relElementMap,
+    "added node parent",
+    node.parentFallbackSelector
+  );
+  let targetParent = parent;
+  if (!targetParent || !canContainChildrenForExport(targetParent)) {
+    targetParent = document.body || document.documentElement;
+  }
+  if (!targetParent) {
+    return null;
+  }
+
+  const element = createNodeElementForExport(document, node.type, node.props);
+  if (!element) {
+    return null;
+  }
+  targetParent.appendChild(element);
+
+  if (node.relId) {
+    relElementMap.set(node.relId, element);
+  }
+  return element;
+}
+
+function applyMovedNodeForExport(document, moveOp, selectorMap, patch, relElementMap) {
+  const source = resolveElementForExportOperation(
+    document,
+    moveOp.sourceRelId,
+    selectorMap,
+    patch,
+    relElementMap,
+    "move source",
+    moveOp.sourceFallbackSelector
+  );
+  const target = resolveElementForExportOperation(
+    document,
+    moveOp.targetRelId,
+    selectorMap,
+    patch,
+    relElementMap,
+    "move target",
+    moveOp.targetFallbackSelector
+  );
+  if (!source || !target) {
+    return false;
+  }
+  if (source === target || source.contains(target)) {
+    return false;
+  }
+  if (PROTECTED_TAGS.has(String(source.tagName || "").toUpperCase())) {
+    return false;
+  }
+
+  let parent = null;
+  let reference = null;
+  if (moveOp.placement === "inside") {
+    if (!canContainChildrenForExport(target)) {
+      return false;
+    }
+    parent = target;
+    reference = null;
+  } else if (moveOp.placement === "before") {
+    parent = target.parentNode;
+    reference = target;
+  } else {
+    parent = target.parentNode;
+    reference = target.nextSibling;
+  }
+  if (!(parent && typeof parent.insertBefore === "function")) {
+    return false;
+  }
+  if (parent === source || source.contains(parent)) {
+    return false;
+  }
+  parent.insertBefore(source, reference);
+  return true;
+}
+
+function applyDeletedNodeForExport(document, node, selectorMap, patch, relElementMap) {
+  const element = resolveElementForExportOperation(
+    document,
+    node.relId,
+    selectorMap,
+    patch,
+    relElementMap,
+    "delete node",
+    node.fallbackSelector
+  );
+  if (!element || !element.parentNode) {
+    return false;
+  }
+  const relId = String(node.relId || "").trim();
+  if (relId) {
+    relElementMap.delete(relId);
+  }
+  element.parentNode.removeChild(element);
+  return true;
+}
+
+function resolveElementForExportOperation(document, relId, selectorMap, patch, relElementMap, contextLabel, fallbackSelector) {
+  const safeRelId = String(relId || "").trim();
+  if (safeRelId && relElementMap.has(safeRelId)) {
+    const mapped = relElementMap.get(safeRelId);
+    if (mapped && mapped.isConnected) {
+      return mapped;
+    }
+    relElementMap.delete(safeRelId);
+  }
+
+  let selector = "";
+  if (safeRelId) {
+    selector = resolveExportSelector(safeRelId, selectorMap, patch);
+  }
+  if (!selector) {
+    selector = normalizeSelectorValue(fallbackSelector);
+  }
+  if (!selector) {
+    if (safeRelId) {
+      console.warn(`[REL export] Missing selector for ${contextLabel} relId "${safeRelId}". Skipping.`);
+    }
+    return null;
+  }
+
+  const element = selectSingleNode(document, selector, safeRelId || "(selector)", contextLabel);
+  if (!element) {
+    return null;
+  }
+  if (safeRelId) {
+    relElementMap.set(safeRelId, element);
+  }
+  return element;
+}
+
+function canContainChildrenForExport(element) {
+  if (!element || !element.tagName) {
+    return false;
+  }
+  const tagName = String(element.tagName || "").toUpperCase();
+  if (PROTECTED_TAGS.has(tagName)) {
+    return false;
+  }
+  if (VOID_TAGS.has(tagName)) {
+    return false;
+  }
+  return true;
+}
+
+function createNodeElementForExport(document, type, props) {
+  const safeType = String(type || "").trim().toLowerCase();
+  const safeProps = ensurePlainObject(props);
+  switch (safeType) {
+    case "section":
+      return createSectionElementForExport(document, safeProps);
+    case "container":
+      return createTextNodeElementForExport(document, "div", safeProps.text || "Container");
+    case "heading-h1":
+      return createTextNodeElementForExport(document, "h1", safeProps.text || "Heading H1");
+    case "heading-h2":
+      return createTextNodeElementForExport(document, "h2", safeProps.text || "Heading H2");
+    case "heading-h3":
+      return createTextNodeElementForExport(document, "h3", safeProps.text || "Heading H3");
+    case "paragraph":
+      return createTextNodeElementForExport(document, "p", safeProps.text || "Paragraph text");
+    case "button": {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = safeProps.text || "Button";
+      return button;
+    }
+    case "image": {
+      const img = document.createElement("img");
+      img.src = String(safeProps.src || "https://via.placeholder.com/480x240.png?text=Image").trim();
+      img.alt = String(safeProps.alt || "Image");
+      return img;
+    }
+    case "link": {
+      const anchor = document.createElement("a");
+      anchor.href = String(safeProps.href || "#");
+      anchor.textContent = String(safeProps.text || "Link");
+      return anchor;
+    }
+    case "card":
+      return createBasicCardForExport(document);
+    case "spacer": {
+      const spacer = document.createElement("div");
+      spacer.style.height = String(safeProps.height || "24px");
+      spacer.style.width = "100%";
+      spacer.setAttribute("aria-hidden", "true");
+      return spacer;
+    }
+    case "divider":
+      return document.createElement("hr");
+    case "bootstrap-card":
+      return createBootstrapCardForExport(document);
+    case "bootstrap-button": {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-primary";
+      btn.textContent = String(safeProps.text || "Bootstrap Button");
+      return btn;
+    }
+    case "bootstrap-grid":
+      return createBootstrapGridForExport(document);
+    case "bootstrap-navbar":
+      return createBootstrapNavbarForExport(document);
+    case "bulma-button": {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "button is-primary";
+      btn.textContent = String(safeProps.text || "Bulma Button");
+      return btn;
+    }
+    case "bulma-card":
+      return createBulmaCardForExport(document);
+    case "pico-button": {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "contrast";
+      btn.textContent = String(safeProps.text || "Pico Button");
+      return btn;
+    }
+    case "pico-link": {
+      const anchor = document.createElement("a");
+      anchor.href = String(safeProps.href || "#");
+      anchor.className = "contrast";
+      anchor.textContent = String(safeProps.text || "Pico Link");
+      return anchor;
+    }
+    default:
+      return createTextNodeElementForExport(document, "div", safeProps.text || "New element");
+  }
+}
+
+function createTextNodeElementForExport(document, tagName, text) {
+  const el = document.createElement(tagName);
+  el.textContent = String(text || "");
+  return el;
+}
+
+function createSectionElementForExport(document, props) {
+  const section = document.createElement("section");
+  if (Object.prototype.hasOwnProperty.call(props, "text")) {
+    section.textContent = String(props.text || "");
+  }
+  return section;
+}
+
+function createBasicCardForExport(document) {
+  const card = document.createElement("article");
+  const title = document.createElement("h3");
+  const text = document.createElement("p");
+  const button = document.createElement("button");
+
+  card.className = "rel-added-card";
+  card.style.border = "1px solid #dddddd";
+  card.style.borderRadius = "8px";
+  card.style.padding = "12px";
+  card.style.background = "#ffffff";
+
+  title.textContent = "Card title";
+  text.textContent = "Card description text";
+  button.type = "button";
+  button.textContent = "Action";
+
+  card.appendChild(title);
+  card.appendChild(text);
+  card.appendChild(button);
+  return card;
+}
+
+function createBootstrapCardForExport(document) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const body = document.createElement("div");
+  body.className = "card-body";
+  const title = document.createElement("h5");
+  title.className = "card-title";
+  title.textContent = "Card title";
+  const text = document.createElement("p");
+  text.className = "card-text";
+  text.textContent = "Some quick example text.";
+  const link = document.createElement("a");
+  link.className = "btn btn-primary";
+  link.href = "#";
+  link.textContent = "Go somewhere";
+  body.appendChild(title);
+  body.appendChild(text);
+  body.appendChild(link);
+  card.appendChild(body);
+  return card;
+}
+
+function createBootstrapGridForExport(document) {
+  const row = document.createElement("div");
+  row.className = "row";
+
+  const colOne = document.createElement("div");
+  colOne.className = "col";
+  colOne.textContent = "Col 1";
+
+  const colTwo = document.createElement("div");
+  colTwo.className = "col";
+  colTwo.textContent = "Col 2";
+
+  row.appendChild(colOne);
+  row.appendChild(colTwo);
+  return row;
+}
+
+function createBootstrapNavbarForExport(document) {
+  const nav = document.createElement("nav");
+  nav.className = "navbar navbar-expand-lg bg-body-tertiary";
+
+  const container = document.createElement("div");
+  container.className = "container-fluid";
+
+  const brand = document.createElement("a");
+  brand.className = "navbar-brand";
+  brand.href = "#";
+  brand.textContent = "Navbar";
+
+  container.appendChild(brand);
+  nav.appendChild(container);
+  return nav;
+}
+
+function createBulmaCardForExport(document) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  const cardContent = document.createElement("div");
+  cardContent.className = "card-content";
+
+  const title = document.createElement("p");
+  title.className = "title is-5";
+  title.textContent = "Bulma Card";
+
+  const text = document.createElement("p");
+  text.textContent = "Card content";
+
+  cardContent.appendChild(title);
+  cardContent.appendChild(text);
+  card.appendChild(cardContent);
+  return card;
 }
 
 function canApplyTextOverride(element) {

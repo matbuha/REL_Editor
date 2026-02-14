@@ -273,6 +273,12 @@
       return;
     }
 
+    if (message.type === "REL_MOVE_NODE") {
+      const payload = message.payload || {};
+      moveNodeByReference(payload, { silent: false });
+      return;
+    }
+
     if (message.type === "REL_CENTER_IN_PARENT") {
       const payload = message.payload || {};
       centerElementInParent(payload.relId);
@@ -376,6 +382,11 @@
       applyTextOverride(relId, entry.text, { silent: true });
     }
 
+    const movedNodes = Array.isArray(payload.movedNodes) ? payload.movedNodes : [];
+    for (const moveOp of movedNodes) {
+      moveNodeByReference(moveOp, { silent: true });
+    }
+
     const deletedNodes = Array.isArray(payload.deletedNodes) ? payload.deletedNodes : [];
     for (const node of deletedNodes) {
       deleteNodeByReference({
@@ -470,6 +481,184 @@
     }
 
     return true;
+  }
+
+  function moveNodeByReference(rawMove, options) {
+    const move = rawMove && typeof rawMove === "object" ? rawMove : {};
+    const opts = options && typeof options === "object" ? options : {};
+    const silent = Boolean(opts.silent);
+    const placement = normalizeMovePlacement(move.placement);
+    const sourceRelId = String(move.sourceRelId || move.relId || "").trim();
+    const targetRelId = String(move.targetRelId || "").trim();
+    const sourceFallbackSelector = String(move.sourceFallbackSelector || move.fallbackSelector || "").trim();
+    const targetFallbackSelector = String(move.targetFallbackSelector || "").trim();
+
+    if (!sourceRelId || !targetRelId) {
+      return false;
+    }
+
+    const sourceElement = resolveElementByReference(sourceRelId, sourceFallbackSelector);
+    const targetElement = resolveElementByReference(targetRelId, targetFallbackSelector);
+    if (!sourceElement || !targetElement) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_MOVE_ERROR",
+          payload: {
+            sourceRelId,
+            targetRelId,
+            message: "Source or target element not found",
+          },
+        });
+      }
+      return false;
+    }
+
+    if (sourceElement === targetElement || sourceElement.contains(targetElement)) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_MOVE_ERROR",
+          payload: {
+            sourceRelId,
+            targetRelId,
+            message: "Cannot move an element into itself or one of its descendants",
+          },
+        });
+      }
+      return false;
+    }
+
+    if (isProtectedElement(sourceElement) || isEditorSystemElement(sourceElement)) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_MOVE_ERROR",
+          payload: {
+            sourceRelId,
+            targetRelId,
+            message: "Source element is protected and cannot be moved",
+          },
+        });
+      }
+      return false;
+    }
+
+    if (isProtectedElement(targetElement) || isEditorSystemElement(targetElement)) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_MOVE_ERROR",
+          payload: {
+            sourceRelId,
+            targetRelId,
+            message: "Target element is protected and cannot be used as a drop target",
+          },
+        });
+      }
+      return false;
+    }
+
+    let parent = null;
+    let referenceNode = null;
+    if (placement === "inside") {
+      if (!canContainChildren(targetElement)) {
+        if (!silent) {
+          postToEditor({
+            type: "REL_MOVE_ERROR",
+            payload: {
+              sourceRelId,
+              targetRelId,
+              message: "Target element cannot contain child nodes",
+            },
+          });
+        }
+        return false;
+      }
+      parent = targetElement;
+      referenceNode = null;
+    } else if (placement === "before") {
+      parent = targetElement.parentNode;
+      referenceNode = targetElement;
+    } else {
+      parent = targetElement.parentNode;
+      referenceNode = targetElement.nextSibling;
+    }
+
+    if (!(parent instanceof Node)) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_MOVE_ERROR",
+          payload: {
+            sourceRelId,
+            targetRelId,
+            message: "Cannot resolve a valid drop parent",
+          },
+        });
+      }
+      return false;
+    }
+    if (parent === sourceElement || sourceElement.contains(parent)) {
+      if (!silent) {
+        postToEditor({
+          type: "REL_MOVE_ERROR",
+          payload: {
+            sourceRelId,
+            targetRelId,
+            message: "Cannot move into a descendant container",
+          },
+        });
+      }
+      return false;
+    }
+
+    parent.insertBefore(sourceElement, referenceNode);
+    const finalSourceRelId = ensureRelId(sourceElement, sourceRelId);
+    const finalTargetRelId = ensureRelId(targetElement, targetRelId);
+    const sourceStableSelector = buildStableSelector(sourceElement);
+    const targetStableSelector = buildStableSelector(targetElement);
+
+    if (!silent) {
+      selectElement(sourceElement);
+      postToEditor({
+        type: "REL_NODE_MOVED",
+        payload: {
+          operation: {
+            sourceRelId: finalSourceRelId,
+            targetRelId: finalTargetRelId,
+            placement,
+            sourceFallbackSelector: sourceStableSelector,
+            targetFallbackSelector: targetStableSelector,
+            sourceStableSelector: sourceStableSelector,
+            targetStableSelector: targetStableSelector,
+            timestamp: Date.now(),
+          },
+        },
+      });
+      postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    }
+
+    return true;
+  }
+
+  function normalizeMovePlacement(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "before" || normalized === "after" || normalized === "inside") {
+      return normalized;
+    }
+    return "inside";
+  }
+
+  function resolveElementByReference(relId, fallbackSelector) {
+    const byRelId = findElementByRelIdOrFallback(relId, state.elementsMap);
+    if (byRelId) {
+      return byRelId;
+    }
+    const selector = String(fallbackSelector || "").trim();
+    if (!selector) {
+      return null;
+    }
+    try {
+      return document.querySelector(selector);
+    } catch {
+      return null;
+    }
   }
 
   function selectElement(element) {
@@ -1428,17 +1617,28 @@
       if (SKIP_TAGS.has(el.tagName)) {
         continue;
       }
+      if (isEditorSystemElement(el)) {
+        continue;
+      }
 
       const relId = ensureRelId(el);
+      const parentRelId = el.parentElement && !isEditorSystemElement(el.parentElement)
+        ? ensureRelId(el.parentElement)
+        : "";
+      const children = Array.from(el.children).filter((child) => !SKIP_TAGS.has(child.tagName) && !isEditorSystemElement(child));
       result.push({
         relId,
+        parentRelId,
         depth,
         tagName: el.tagName.toLowerCase(),
         id: el.id || "",
         className: getUserClassString(el),
+        hasChildren: children.length > 0,
+        canContainChildren: canContainChildren(el),
+        isProtected: isProtectedElement(el),
+        isSystem: false,
       });
 
-      const children = Array.from(el.children).filter((child) => !SKIP_TAGS.has(child.tagName));
       for (let i = children.length - 1; i >= 0; i -= 1) {
         stack.push({ element: children[i], depth: depth + 1 });
       }
@@ -1531,6 +1731,9 @@
     if (SKIP_TAGS.has(element.tagName)) {
       return false;
     }
+    if (isEditorSystemElement(element)) {
+      return false;
+    }
     if (VOID_TAGS.has(element.tagName)) {
       return false;
     }
@@ -1542,6 +1745,22 @@
       return true;
     }
     return PROTECTED_TAGS.has(element.tagName);
+  }
+
+  function isEditorSystemElement(element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+    if (element.dataset && (element.dataset.relWrapper || element.dataset.relLinkWrapperFor)) {
+      return true;
+    }
+    if (element.dataset && element.dataset.relRuntime) {
+      return true;
+    }
+    if (element.closest("[data-rel-runtime]")) {
+      return true;
+    }
+    return false;
   }
 
   function isEditableTarget(target) {

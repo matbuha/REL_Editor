@@ -201,6 +201,12 @@
   const RIGHT_MIN_PX = 260;
   const CENTER_MIN_PX = 320;
   const RESIZER_TOTAL_PX = 16;
+  const TREE_INDENT_PX = 14;
+  const TREE_AUTO_EXPAND_DELAY_MS = 750;
+  const TREE_DROP_INSIDE_MIN_RATIO = 0.32;
+  const TREE_DROP_INSIDE_MAX_RATIO = 0.68;
+  const TREE_VOID_TAGS = new Set(["img", "input", "br", "hr", "meta", "link", "source", "track", "wbr"]);
+  const TREE_PROTECTED_TAGS = new Set(["html", "head"]);
   const TOOLTIP_DEV_CHECK_DELAY_MS = 200;
   const TOOLTIP_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
   const TOOLTIP_ALLOWLIST_SELECTORS = [
@@ -259,6 +265,7 @@
     linksMeta: {},
     addedNodes: [],
     deletedNodes: [],
+    movedNodes: [],
     lastSelection: null,
     lastTreeSnapshot: [],
     overlayReady: false,
@@ -281,6 +288,21 @@
       devCheckTimer: 0,
       warnedMissing: new Set(),
       warnedUnknownKeys: new Set(),
+    },
+    treeUi: {
+      collapsedByRelId: {},
+      parentByRelId: {},
+      nodeByRelId: {},
+      query: "",
+      dragSourceRelId: "",
+      dragHoverRelId: "",
+      dragDropPosition: "",
+      dragAutoExpandRelId: "",
+      dragAutoExpandTimer: 0,
+      dragTooltipEl: null,
+      dragging: false,
+      bound: false,
+      dragSourceRow: null,
     },
     controls: {
       styleInputs: {},
@@ -423,6 +445,7 @@
 
   async function init() {
     setupTabs();
+    initTreeUi();
     buildStyleControls();
     buildThemeManagerUi();
     setupTooltipSystem();
@@ -647,6 +670,94 @@
     return node.tagName.toLowerCase();
   }
 
+  function initTreeUi() {
+    ensureTreeDragTooltip();
+    if (state.treeUi.bound || !(dom.treeContainer instanceof Element)) {
+      return;
+    }
+    state.treeUi.bound = true;
+
+    dom.treeContainer.addEventListener("dragover", (event) => {
+      if (!state.treeUi.dragging) {
+        return;
+      }
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+    });
+
+    dom.treeContainer.addEventListener("drop", (event) => {
+      if (!state.treeUi.dragging) {
+        return;
+      }
+      event.preventDefault();
+      clearTreeDropIndicator();
+      clearTreeDragState();
+    });
+
+    dom.treeContainer.addEventListener("dragleave", (event) => {
+      if (!state.treeUi.dragging) {
+        return;
+      }
+      const next = event.relatedTarget;
+      if (next instanceof Element && dom.treeContainer.contains(next)) {
+        return;
+      }
+      clearTreeDropIndicator();
+      hideTreeDragTooltip();
+    });
+  }
+
+  function ensureTreeDragTooltip() {
+    const container = dom.treeContainer;
+    if (!(container instanceof Element)) {
+      return;
+    }
+    const parent = container.parentElement;
+    if (!(parent instanceof Element)) {
+      return;
+    }
+    if (state.treeUi.dragTooltipEl && state.treeUi.dragTooltipEl.isConnected) {
+      return;
+    }
+    const tooltip = document.createElement("div");
+    tooltip.className = "tree-drop-tooltip hidden";
+    tooltip.setAttribute("aria-hidden", "true");
+    parent.appendChild(tooltip);
+    state.treeUi.dragTooltipEl = tooltip;
+  }
+
+  function showTreeDragTooltip(text, clientX, clientY) {
+    const tooltip = state.treeUi.dragTooltipEl;
+    if (!(tooltip instanceof HTMLElement)) {
+      return;
+    }
+
+    const parent = tooltip.parentElement;
+    if (!(parent instanceof HTMLElement)) {
+      return;
+    }
+
+    const parentRect = parent.getBoundingClientRect();
+    const x = Number(clientX) - parentRect.left + 10;
+    const y = Number(clientY) - parentRect.top + 12;
+    tooltip.textContent = String(text || "").trim();
+    tooltip.style.left = `${Math.max(8, Math.round(x))}px`;
+    tooltip.style.top = `${Math.max(8, Math.round(y))}px`;
+    tooltip.classList.remove("hidden");
+    tooltip.setAttribute("aria-hidden", "false");
+  }
+
+  function hideTreeDragTooltip() {
+    const tooltip = state.treeUi.dragTooltipEl;
+    if (!(tooltip instanceof HTMLElement)) {
+      return;
+    }
+    tooltip.classList.add("hidden");
+    tooltip.setAttribute("aria-hidden", "true");
+  }
+
   function bindEvents() {
     window.addEventListener("message", onMessageFromOverlay);
     window.addEventListener("keydown", onEditorKeyDown, true);
@@ -693,6 +804,7 @@
 
     dom.treeSearchInput.addEventListener("input", (event) => {
       const query = event.target.value.trim().toLowerCase();
+      state.treeUi.query = query;
       renderTree(state.lastTreeSnapshot, query);
     });
 
@@ -2911,10 +3023,17 @@
     state.linksMeta = {};
     state.addedNodes = [];
     state.deletedNodes = [];
+    state.movedNodes = [];
     state.lastSelection = null;
     state.lastTreeSnapshot = [];
     state.overlayReady = false;
     state.controls.backgroundModeByRelId = {};
+    state.treeUi.collapsedByRelId = {};
+    state.treeUi.parentByRelId = {};
+    state.treeUi.nodeByRelId = {};
+    state.treeUi.query = "";
+    clearTreeDropIndicator();
+    clearTreeDragState();
 
     dom.projectRootInput.value = state.projectRoot;
     dom.indexPathInput.value = state.indexPath;
@@ -3385,6 +3504,7 @@
     state.linksMeta = normalizedPatch.linksMeta;
     state.addedNodes = normalizedPatch.addedNodes;
     state.deletedNodes = normalizedPatch.deletedNodes;
+    state.movedNodes = normalizedPatch.movedNodes;
     state.runtimeLibraries = normalizedPatch.runtimeLibraries || { ...state.defaultsLibraries };
     state.runtimeFonts = normalizedPatch.runtimeFonts || { ...state.defaultsFonts, families: [...state.defaultsFonts.families] };
     state.theme = normalizedPatch.theme || createDefaultThemeState();
@@ -3415,6 +3535,7 @@
       linksMeta: state.linksMeta,
       addedNodes: state.addedNodes,
       deletedNodes: state.deletedNodes,
+      movedNodes: state.movedNodes,
       runtimeLibraries: state.runtimeLibraries,
       runtimeFonts: state.runtimeFonts,
       theme: state.theme,
@@ -3634,7 +3755,9 @@
 
     if (msg.type === "REL_TREE_SNAPSHOT") {
       state.lastTreeSnapshot = Array.isArray(msg.payload) ? msg.payload : [];
-      renderTree(state.lastTreeSnapshot, dom.treeSearchInput.value.trim().toLowerCase());
+      const query = dom.treeSearchInput.value.trim().toLowerCase();
+      state.treeUi.query = query;
+      renderTree(state.lastTreeSnapshot, query);
       return;
     }
 
@@ -3645,6 +3768,11 @@
 
     if (msg.type === "REL_NODE_DELETED") {
       handleNodeDeleted(msg.payload);
+      return;
+    }
+
+    if (msg.type === "REL_NODE_MOVED") {
+      handleNodeMoved(msg.payload);
       return;
     }
 
@@ -3663,6 +3791,12 @@
     if (msg.type === "REL_TEXT_ERROR") {
       const details = msg.payload || {};
       setStatus(details.message || "Text update failed", true);
+      return;
+    }
+
+    if (msg.type === "REL_MOVE_ERROR") {
+      const details = msg.payload || {};
+      setStatus(details.message || "Move failed", true);
       return;
     }
 
@@ -4341,6 +4475,9 @@
       delete state.attributeOverrides[relId];
       delete state.textOverrides[relId];
       state.addedNodes = state.addedNodes.filter((node) => node.relId !== relId);
+      state.movedNodes = state.movedNodes.filter((entry) => {
+        return entry.sourceRelId !== relId && entry.targetRelId !== relId;
+      });
       state.elementsMap[relId] = fallbackSelector || state.elementsMap[relId] || "";
     }
 
@@ -4360,6 +4497,37 @@
     clearSelectionUi();
     requestTreeSnapshot();
     setStatus("Element deleted");
+  }
+
+  function handleNodeMoved(payload) {
+    const operation = normalizeMovedNodeEntry(payload && payload.operation ? payload.operation : payload);
+    if (!operation) {
+      return;
+    }
+
+    upsertMovedNodeOperation(operation);
+    if (operation.sourceRelId && operation.sourceFallbackSelector) {
+      state.elementsMap[operation.sourceRelId] = operation.sourceFallbackSelector;
+    }
+    if (operation.targetRelId && operation.targetFallbackSelector && !state.elementsMap[operation.targetRelId]) {
+      state.elementsMap[operation.targetRelId] = operation.targetFallbackSelector;
+    }
+    if (operation.sourceRelId && operation.sourceStableSelector) {
+      state.selectorMap[operation.sourceRelId] = operation.sourceStableSelector;
+    }
+    if (operation.targetRelId && operation.targetStableSelector && !state.selectorMap[operation.targetRelId]) {
+      state.selectorMap[operation.targetRelId] = operation.targetStableSelector;
+    }
+    setStatus("Tree move applied");
+  }
+
+  function upsertMovedNodeOperation(operation) {
+    const normalized = normalizeMovedNodeEntry(operation);
+    if (!normalized) {
+      return;
+    }
+    state.movedNodes = state.movedNodes.filter((entry) => entry.sourceRelId !== normalized.sourceRelId);
+    state.movedNodes.push(normalized);
   }
 
   function handleCenterApplied(payload) {
@@ -4397,31 +4565,246 @@
   }
 
   function renderTree(items, searchQuery) {
+    initTreeUi();
     dom.treeContainer.innerHTML = "";
-    const normalizedItems = Array.isArray(items) ? items : [];
 
-    for (const item of normalizedItems) {
-      if (!matchesTreeNode(item, searchQuery)) {
+    const query = String(searchQuery || "").trim().toLowerCase();
+    state.treeUi.query = query;
+    const model = buildTreeModel(items);
+    const nodeByRelId = {};
+    const parentByRelId = {};
+    for (const item of model) {
+      nodeByRelId[item.relId] = item;
+      parentByRelId[item.relId] = item.parentRelId || "";
+    }
+    state.treeUi.nodeByRelId = nodeByRelId;
+    state.treeUi.parentByRelId = parentByRelId;
+    pruneTreeCollapsedState(nodeByRelId);
+
+    const filteredModel = filterTreeItemsByQuery(model, query);
+    const visibleItems = query ? filteredModel : computeVisibleTreeItems(filteredModel);
+    for (const item of visibleItems) {
+      const row = buildTreeRowElement(item);
+      dom.treeContainer.appendChild(row);
+    }
+
+    markActiveTreeNode(state.selectedRelId || "");
+    scheduleTooltipCoverageCheck();
+  }
+
+  function buildTreeModel(items) {
+    const source = Array.isArray(items) ? items : [];
+    const relStack = [];
+    const model = [];
+
+    for (let index = 0; index < source.length; index += 1) {
+      const raw = source[index] && typeof source[index] === "object" ? source[index] : {};
+      const relId = String(raw.relId || "").trim();
+      if (!relId) {
         continue;
       }
 
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "tree-node";
-      btn.style.paddingLeft = `${8 + item.depth * 12}px`;
-      btn.textContent = formatTreeLabel(item);
-      btn.setAttribute("data-rel-id", item.relId);
-      setTooltipKey(btn, "tree.node");
-      btn.addEventListener("click", () => {
-        sendToOverlay({
-          type: "REL_SELECT_BY_REL_ID",
-          payload: { relId: item.relId },
-        });
-      });
+      const depthRaw = Number(raw.depth);
+      const depth = Number.isFinite(depthRaw) ? Math.max(0, Math.floor(depthRaw)) : 0;
+      while (relStack.length > depth) {
+        relStack.pop();
+      }
 
-      dom.treeContainer.appendChild(btn);
+      const nextRaw = source[index + 1] && typeof source[index + 1] === "object" ? source[index + 1] : null;
+      const nextDepth = nextRaw ? Math.max(0, Math.floor(Number(nextRaw.depth) || 0)) : depth;
+      const tagName = String(raw.tagName || "").trim().toLowerCase() || "div";
+      const isSystem = Boolean(raw.isSystem);
+      const isProtected = Boolean(raw.isProtected) || TREE_PROTECTED_TAGS.has(tagName);
+      const inferredCanContainChildren = !TREE_VOID_TAGS.has(tagName) && !isSystem && tagName !== "head";
+      const canContainChildren = Object.prototype.hasOwnProperty.call(raw, "canContainChildren")
+        ? Boolean(raw.canContainChildren)
+        : inferredCanContainChildren;
+      const hasChildren = Object.prototype.hasOwnProperty.call(raw, "hasChildren")
+        ? Boolean(raw.hasChildren)
+        : nextDepth > depth;
+
+      let parentRelId = String(raw.parentRelId || "").trim();
+      if (!parentRelId && depth > 0) {
+        parentRelId = String(relStack[depth - 1] || "").trim();
+      }
+
+      const item = {
+        relId,
+        parentRelId,
+        depth,
+        tagName,
+        id: String(raw.id || "").trim(),
+        className: String(raw.className || "").trim(),
+        hasChildren,
+        canContainChildren,
+        canDropInside: canContainChildren && !isProtected && !isSystem,
+        isProtected,
+        isSystem,
+        canDrag: !isProtected && !isSystem,
+      };
+      model.push(item);
+      relStack[depth] = relId;
     }
-    scheduleTooltipCoverageCheck();
+
+    return model;
+  }
+
+  function pruneTreeCollapsedState(nodeByRelId) {
+    const next = {};
+    const current = state.treeUi.collapsedByRelId || {};
+    for (const relId of Object.keys(current)) {
+      if (!current[relId]) {
+        continue;
+      }
+      if (!nodeByRelId[relId]) {
+        continue;
+      }
+      next[relId] = true;
+    }
+    state.treeUi.collapsedByRelId = next;
+  }
+
+  function filterTreeItemsByQuery(items, query) {
+    const safeQuery = String(query || "").trim().toLowerCase();
+    if (!safeQuery) {
+      return items;
+    }
+
+    const byRelId = {};
+    for (const item of items) {
+      byRelId[item.relId] = item;
+    }
+
+    const included = new Set();
+    for (const item of items) {
+      if (!matchesTreeNode(item, safeQuery)) {
+        continue;
+      }
+      let cursor = item;
+      while (cursor) {
+        if (included.has(cursor.relId)) {
+          break;
+        }
+        included.add(cursor.relId);
+        const parentRelId = String(cursor.parentRelId || "").trim();
+        cursor = parentRelId ? byRelId[parentRelId] : null;
+      }
+    }
+
+    return items.filter((item) => included.has(item.relId));
+  }
+
+  function computeVisibleTreeItems(items) {
+    const visible = [];
+    const hiddenDepths = [];
+
+    for (const item of items) {
+      while (hiddenDepths.length > 0 && item.depth <= hiddenDepths[hiddenDepths.length - 1]) {
+        hiddenDepths.pop();
+      }
+      if (hiddenDepths.length > 0) {
+        continue;
+      }
+
+      visible.push(item);
+      if (item.hasChildren && isTreeNodeCollapsed(item.relId)) {
+        hiddenDepths.push(item.depth);
+      }
+    }
+
+    return visible;
+  }
+
+  function buildTreeRowElement(item) {
+    const row = document.createElement("div");
+    row.className = "tree-row";
+    row.dataset.relId = item.relId;
+    row.dataset.depth = String(item.depth);
+    if (item.canDropInside) {
+      row.dataset.canDropInside = "1";
+    }
+    if (item.relId === state.selectedRelId) {
+      row.classList.add("active");
+    }
+
+    const guides = document.createElement("div");
+    guides.className = "tree-indent";
+    buildTreeGuideColumns(guides, item.depth);
+    row.appendChild(guides);
+
+    if (item.hasChildren) {
+      const expander = document.createElement("button");
+      expander.type = "button";
+      expander.className = "tree-expander";
+      const collapsed = isTreeNodeCollapsed(item.relId);
+      expander.textContent = collapsed ? "\u25b8" : "\u25be";
+      expander.dataset.relId = item.relId;
+      setTooltipKey(expander, "tree.expandToggle");
+      expander.dataset.tooltipExtra = collapsed ? "Action: expand branch" : "Action: collapse branch";
+      expander.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleTreeNodeCollapsed(item.relId);
+      });
+      row.appendChild(expander);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "tree-expander-spacer";
+      row.appendChild(spacer);
+    }
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tree-node";
+    btn.textContent = formatTreeLabel(item);
+    btn.setAttribute("data-rel-id", item.relId);
+    setTooltipKey(btn, "tree.node");
+    btn.dataset.tooltipExtra = `rel-id: ${item.relId}`;
+    btn.addEventListener("click", () => {
+      sendToOverlay({
+        type: "REL_SELECT_BY_REL_ID",
+        payload: { relId: item.relId },
+      });
+    });
+    row.appendChild(btn);
+
+    if (item.canDrag) {
+      row.draggable = true;
+      row.addEventListener("dragstart", (event) => {
+        onTreeRowDragStart(event, item, row);
+      });
+    }
+    row.addEventListener("dragover", (event) => {
+      onTreeRowDragOver(event, item, row);
+    });
+    row.addEventListener("drop", (event) => {
+      onTreeRowDrop(event, item, row);
+    });
+    row.addEventListener("dragleave", (event) => {
+      onTreeRowDragLeave(event, item, row);
+    });
+    row.addEventListener("dragend", () => {
+      onTreeRowDragEnd();
+    });
+
+    return row;
+  }
+
+  function buildTreeGuideColumns(container, depth) {
+    const levels = Math.max(0, Number(depth) || 0);
+    if (levels <= 0) {
+      return;
+    }
+    for (let i = 0; i < levels - 1; i += 1) {
+      const column = document.createElement("span");
+      column.className = "tree-guide-col";
+      column.style.width = `${TREE_INDENT_PX}px`;
+      container.appendChild(column);
+    }
+    const branch = document.createElement("span");
+    branch.className = "tree-guide-branch";
+    branch.style.width = `${TREE_INDENT_PX}px`;
+    container.appendChild(branch);
   }
 
   function matchesTreeNode(node, query) {
@@ -4432,10 +4815,283 @@
     return haystack.includes(query);
   }
 
+  function isTreeNodeCollapsed(relId) {
+    return Boolean(state.treeUi.collapsedByRelId[String(relId || "").trim()]);
+  }
+
+  function toggleTreeNodeCollapsed(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+    const current = isTreeNodeCollapsed(safeRelId);
+    if (current) {
+      delete state.treeUi.collapsedByRelId[safeRelId];
+    } else {
+      state.treeUi.collapsedByRelId[safeRelId] = true;
+    }
+    renderTree(state.lastTreeSnapshot, state.treeUi.query || "");
+  }
+
+  function onTreeRowDragStart(event, item, row) {
+    if (!item || !item.canDrag) {
+      event.preventDefault();
+      return;
+    }
+
+    const sourceRelId = String(item.relId || "").trim();
+    if (!sourceRelId) {
+      event.preventDefault();
+      return;
+    }
+
+    state.treeUi.dragging = true;
+    state.treeUi.dragSourceRelId = sourceRelId;
+    state.treeUi.dragSourceRow = row;
+    row.classList.add("drag-source");
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", sourceRelId);
+    }
+    showTreeDragTooltip("Move element", event.clientX, event.clientY);
+  }
+
+  function onTreeRowDragOver(event, item, row) {
+    if (!state.treeUi.dragging || !state.treeUi.dragSourceRelId) {
+      return;
+    }
+
+    const placement = resolveTreeDropPlacementFromPointer(event, row, item);
+    if (!isValidTreeDropTarget(state.treeUi.dragSourceRelId, item, placement)) {
+      clearTreeDropIndicator();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+    applyTreeDropIndicator(row, item, placement, event.clientX, event.clientY);
+  }
+
+  function onTreeRowDrop(event, item, row) {
+    if (!state.treeUi.dragging || !state.treeUi.dragSourceRelId) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+
+    const placement = normalizeTreeDropPlacement(
+      state.treeUi.dragHoverRelId === item.relId
+        ? state.treeUi.dragDropPosition
+        : resolveTreeDropPlacementFromPointer(event, row, item)
+    );
+    if (!isValidTreeDropTarget(state.treeUi.dragSourceRelId, item, placement)) {
+      clearTreeDropIndicator();
+      clearTreeDragState();
+      return;
+    }
+
+    sendToOverlay({
+      type: "REL_MOVE_NODE",
+      payload: {
+        sourceRelId: state.treeUi.dragSourceRelId,
+        targetRelId: item.relId,
+        placement,
+      },
+    });
+    clearTreeDropIndicator();
+    clearTreeDragState();
+  }
+
+  function onTreeRowDragLeave(event, item) {
+    if (!state.treeUi.dragging) {
+      return;
+    }
+    const next = event.relatedTarget;
+    if (next instanceof Element && next.closest(".tree-row") === event.currentTarget) {
+      return;
+    }
+    if (state.treeUi.dragHoverRelId === item.relId) {
+      clearTreeDropIndicator();
+    }
+  }
+
+  function onTreeRowDragEnd() {
+    clearTreeDropIndicator();
+    clearTreeDragState();
+  }
+
+  function resolveTreeDropPlacementFromPointer(event, row, item) {
+    const rect = row.getBoundingClientRect();
+    if (!rect.height) {
+      return "inside";
+    }
+    const y = clamp(Number(event.clientY) - rect.top, 0, rect.height);
+    const ratio = rect.height > 0 ? (y / rect.height) : 0.5;
+    if (
+      item.canDropInside
+      && ratio >= TREE_DROP_INSIDE_MIN_RATIO
+      && ratio <= TREE_DROP_INSIDE_MAX_RATIO
+    ) {
+      return "inside";
+    }
+    return ratio < 0.5 ? "before" : "after";
+  }
+
+  function normalizeTreeDropPlacement(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "before" || normalized === "after" || normalized === "inside") {
+      return normalized;
+    }
+    return "inside";
+  }
+
+  function isValidTreeDropTarget(sourceRelId, targetItem, placement) {
+    const sourceId = String(sourceRelId || "").trim();
+    const target = targetItem && typeof targetItem === "object" ? targetItem : null;
+    const safePlacement = normalizeTreeDropPlacement(placement);
+    if (!sourceId || !target || !target.relId) {
+      return false;
+    }
+    if (sourceId === target.relId) {
+      return false;
+    }
+    const sourceItem = state.treeUi.nodeByRelId[sourceId] || null;
+    if (!sourceItem || sourceItem.isProtected || sourceItem.isSystem || !sourceItem.canDrag) {
+      return false;
+    }
+    if (target.isSystem || target.isProtected) {
+      return false;
+    }
+    if (safePlacement === "inside" && !target.canDropInside) {
+      return false;
+    }
+    if (isTreeDescendant(target.relId, sourceId)) {
+      return false;
+    }
+    return true;
+  }
+
+  function isTreeDescendant(candidateRelId, ancestorRelId) {
+    const candidate = String(candidateRelId || "").trim();
+    const ancestor = String(ancestorRelId || "").trim();
+    if (!candidate || !ancestor) {
+      return false;
+    }
+    let cursor = String(state.treeUi.parentByRelId[candidate] || "").trim();
+    while (cursor) {
+      if (cursor === ancestor) {
+        return true;
+      }
+      cursor = String(state.treeUi.parentByRelId[cursor] || "").trim();
+    }
+    return false;
+  }
+
+  function applyTreeDropIndicator(row, item, placement, clientX, clientY) {
+    const safePlacement = normalizeTreeDropPlacement(placement);
+    if (state.treeUi.dragHoverRelId === item.relId && state.treeUi.dragDropPosition === safePlacement) {
+      showTreeDragTooltip(getTreeDropActionLabel(safePlacement), clientX, clientY);
+      scheduleTreeAutoExpand(item, safePlacement);
+      return;
+    }
+
+    clearTreeDropIndicator();
+    row.dataset.dropPosition = safePlacement;
+    state.treeUi.dragHoverRelId = item.relId;
+    state.treeUi.dragDropPosition = safePlacement;
+
+    showTreeDragTooltip(getTreeDropActionLabel(safePlacement), clientX, clientY);
+    scheduleTreeAutoExpand(item, safePlacement);
+  }
+
+  function clearTreeDropIndicator() {
+    clearTreeAutoExpandTimer();
+    if (state.treeUi.dragHoverRelId) {
+      const previousRow = dom.treeContainer.querySelector(`.tree-row[data-rel-id="${cssEscape(state.treeUi.dragHoverRelId)}"]`);
+      if (previousRow instanceof HTMLElement) {
+        delete previousRow.dataset.dropPosition;
+      }
+    }
+    state.treeUi.dragHoverRelId = "";
+    state.treeUi.dragDropPosition = "";
+    hideTreeDragTooltip();
+  }
+
+  function scheduleTreeAutoExpand(item, placement) {
+    const shouldExpand = Boolean(
+      item
+      && item.hasChildren
+      && isTreeNodeCollapsed(item.relId)
+      && normalizeTreeDropPlacement(placement) === "inside"
+    );
+    if (!shouldExpand) {
+      clearTreeAutoExpandTimer();
+      return;
+    }
+
+    if (state.treeUi.dragAutoExpandRelId === item.relId && state.treeUi.dragAutoExpandTimer) {
+      return;
+    }
+    clearTreeAutoExpandTimer();
+    state.treeUi.dragAutoExpandRelId = item.relId;
+    state.treeUi.dragAutoExpandTimer = window.setTimeout(() => {
+      state.treeUi.dragAutoExpandTimer = 0;
+      const relId = String(state.treeUi.dragAutoExpandRelId || "").trim();
+      state.treeUi.dragAutoExpandRelId = "";
+      if (!relId || !isTreeNodeCollapsed(relId)) {
+        return;
+      }
+      delete state.treeUi.collapsedByRelId[relId];
+      renderTree(state.lastTreeSnapshot, state.treeUi.query || "");
+    }, TREE_AUTO_EXPAND_DELAY_MS);
+  }
+
+  function clearTreeAutoExpandTimer() {
+    if (!state.treeUi.dragAutoExpandTimer) {
+      state.treeUi.dragAutoExpandRelId = "";
+      return;
+    }
+    clearTimeout(state.treeUi.dragAutoExpandTimer);
+    state.treeUi.dragAutoExpandTimer = 0;
+    state.treeUi.dragAutoExpandRelId = "";
+  }
+
+  function clearTreeDragState() {
+    clearTreeAutoExpandTimer();
+    state.treeUi.dragging = false;
+    state.treeUi.dragSourceRelId = "";
+    state.treeUi.dragHoverRelId = "";
+    state.treeUi.dragDropPosition = "";
+    if (state.treeUi.dragSourceRow instanceof Element) {
+      state.treeUi.dragSourceRow.classList.remove("drag-source");
+    }
+    state.treeUi.dragSourceRow = null;
+    hideTreeDragTooltip();
+  }
+
+  function getTreeDropActionLabel(placement) {
+    const normalized = normalizeTreeDropPlacement(placement);
+    if (normalized === "before") {
+      return "Insert before";
+    }
+    if (normalized === "after") {
+      return "Insert after";
+    }
+    return "Nest inside";
+  }
+
   function markActiveTreeNode(relId) {
-    const nodes = dom.treeContainer.querySelectorAll(".tree-node");
-    for (const node of nodes) {
-      node.classList.toggle("active", node.getAttribute("data-rel-id") === relId);
+    const rows = dom.treeContainer.querySelectorAll(".tree-row");
+    for (const row of rows) {
+      const isActive = row.getAttribute("data-rel-id") === relId;
+      row.classList.toggle("active", isActive);
+      const nodeBtn = row.querySelector(".tree-node");
+      if (nodeBtn) {
+        nodeBtn.classList.toggle("active", isActive);
+      }
     }
   }
 
@@ -4461,6 +5117,7 @@
         textOverrides: state.textOverrides,
         addedNodes: state.addedNodes,
         deletedNodes: state.deletedNodes,
+        movedNodes: state.movedNodes,
         runtimeLibraries: state.runtimeLibraries,
         runtimeFonts: state.runtimeFonts,
         themeCss: buildThemeCss(state.theme),
@@ -4847,6 +5504,7 @@
       textOverrides: normalizeTextOverrides(textOverrides),
       addedNodes: ensureArray(patch.addedNodes || patch.added_nodes),
       deletedNodes: ensureArray(patch.deletedNodes || patch.deleted_nodes),
+      movedNodes: normalizeMovedNodes(ensureArray(patch.movedNodes || patch.moved_nodes)),
       runtimeLibraries: runtimeLibraries ? normalizeRuntimeLibraries(runtimeLibraries) : null,
       runtimeFonts: runtimeFonts ? normalizeRuntimeFonts(runtimeFonts) : null,
       theme: theme ? normalizeThemeState(theme) : null,
@@ -4935,6 +5593,41 @@
       result[safeRelId] = { text: String(entry.text || "") };
     }
     return result;
+  }
+
+  function normalizeMovedNodes(value) {
+    const raw = Array.isArray(value) ? value : [];
+    const result = [];
+    for (const entry of raw) {
+      const normalized = normalizeMovedNodeEntry(entry);
+      if (!normalized) {
+        continue;
+      }
+      result.push(normalized);
+    }
+    return result;
+  }
+
+  function normalizeMovedNodeEntry(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const sourceRelId = String(value.sourceRelId || value.relId || "").trim();
+    const targetRelId = String(value.targetRelId || "").trim();
+    const placement = normalizeTreeDropPlacement(value.placement);
+    if (!sourceRelId || !targetRelId) {
+      return null;
+    }
+    return {
+      sourceRelId,
+      targetRelId,
+      placement,
+      sourceFallbackSelector: String(value.sourceFallbackSelector || value.fallbackSelector || "").trim(),
+      targetFallbackSelector: String(value.targetFallbackSelector || "").trim(),
+      sourceStableSelector: String(value.sourceStableSelector || "").trim(),
+      targetStableSelector: String(value.targetStableSelector || "").trim(),
+      timestamp: Number(value.timestamp || Date.now()),
+    };
   }
 
   function normalizeRuntimeLibraries(value) {
@@ -5527,6 +6220,7 @@
       Object.keys(state.linksMeta).length > 0 ||
       state.addedNodes.length > 0 ||
       state.deletedNodes.length > 0 ||
+      state.movedNodes.length > 0 ||
       runtimeDiff ||
       runtimeFontsDiff ||
       themeDiff

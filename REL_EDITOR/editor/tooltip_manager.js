@@ -158,7 +158,7 @@
       return;
     }
 
-    const data = getTooltipData(key, target);
+    const data = mergeTooltipExtras(getTooltipData(key, target), target);
     if (!data) {
       hideTooltip();
       return;
@@ -353,6 +353,30 @@
       return state.registry["generic.input"] || null;
     }
     return null;
+  }
+
+  function mergeTooltipExtras(baseData, target) {
+    if (!baseData || !(target instanceof Element)) {
+      return baseData;
+    }
+    const extraRaw = String(target.getAttribute("data-tooltip-extra") || "").trim();
+    if (!extraRaw) {
+      return baseData;
+    }
+    const extraLines = extraRaw.split("|").map((line) => String(line || "").trim()).filter(Boolean);
+    if (extraLines.length === 0) {
+      return baseData;
+    }
+    const next = {
+      ...baseData,
+      notes: Array.isArray(baseData.notes) ? [...baseData.notes] : [],
+    };
+    for (const line of extraLines) {
+      if (!next.notes.includes(line)) {
+        next.notes.push(line);
+      }
+    }
+    return next;
   }
 
   window.REL_TOOLTIP_MANAGER = {

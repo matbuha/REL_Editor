@@ -58,6 +58,14 @@
   add("tree.search", "Tree Search", "Filters tree nodes by tag, id, and class.", ["Free text"], ["header", "#hero", ".card"]);
   add("tree.refresh", "Refresh Tree", "Requests a fresh tree snapshot from overlay.", ["Button action"], ["refresh after DOM updates"]);
   add("tree.node", "Tree Node", "Selects this element in preview and inspector.", ["Button action"], ["click node to select relId"]);
+  add(
+    "tree.expandToggle",
+    "Expand / Collapse",
+    "Toggles visibility of child nodes in this branch.",
+    ["Click toggle"],
+    ["Collapsed -> hidden children", "Expanded -> visible children"],
+    ["During drag, holding over a collapsed branch for ~750ms auto-expands it."]
+  );
 
   add("add.external", "Library Block", "Draggable block from active design library.", ["Drag and drop"], ["Bootstrap Card"]);
   [

@@ -1,0 +1,16 @@
+REL_EDITOR Tree Drag and Drop
+
+1. Open the Tree tab.
+2. Drag a node row with the mouse.
+3. Drop behavior:
+   - Top half of a row: Insert before
+   - Bottom half of a row: Insert after
+   - Center area of a row: Nest inside (if target can contain children)
+4. During drag:
+   - Blue horizontal line = before/after drop
+   - Blue row highlight = nest inside drop
+   - Small tooltip shows the action (Insert before / Insert after / Nest inside)
+5. Hold over a collapsed row for ~750ms to auto-expand during drag.
+6. Invalid drops are blocked (self/descendant/system nodes).
+7. After drop, preview updates immediately and the moved node stays selected.
+8. Click Save Patch to persist structural moves in rel_editor/patch.json; Export Safe applies them in REL_* outputs.

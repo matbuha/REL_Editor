@@ -392,18 +392,130 @@ button:hover {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
-  padding: 8px;
+  padding: 6px;
+  position: relative;
+}
+
+.tree-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 5px;
+  gap: 0;
+}
+
+.tree-row.active {
+  background: #f4e2cf;
+}
+
+.tree-row.drag-source .tree-node {
+  opacity: 0.55;
+}
+
+.tree-row[data-drop-position="inside"] .tree-node {
+  background: #e9f3ff;
+  border-color: #73a7db;
+}
+
+.tree-row[data-drop-position="before"]::before,
+.tree-row[data-drop-position="after"]::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  background: #2f79c7;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.tree-row[data-drop-position="before"]::before {
+  top: -1px;
+}
+
+.tree-row[data-drop-position="after"]::after {
+  bottom: -1px;
+}
+
+.tree-indent {
+  display: inline-flex;
+  align-items: stretch;
+  align-self: stretch;
+}
+
+.tree-guide-col,
+.tree-guide-branch {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.tree-guide-col::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid #d7c8b6;
+  transform: translateX(-0.5px);
+}
+
+.tree-guide-branch::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 50%;
+  border-left: 1px solid #d7c8b6;
+  transform: translateX(-0.5px);
+}
+
+.tree-guide-branch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 52%;
+  border-top: 1px solid #d7c8b6;
+  transform: translateY(-0.5px);
+}
+
+.tree-expander {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #765f47;
+  font-size: 11px;
+  line-height: 1;
+  margin-right: 2px;
+}
+
+.tree-expander:hover {
+  border-color: #ceb8a1;
+  background: #f8ecdf;
+}
+
+.tree-expander-spacer {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  margin-right: 2px;
 }
 
 .tree-node {
-  display: block;
-  width: 100%;
+  display: inline-block;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   text-align: left;
-  border: none;
+  border: 1px solid transparent;
   border-radius: 4px;
-  padding: 4px 6px;
+  padding: 3px 6px;
   background: transparent;
-  margin-bottom: 2px;
+  margin: 1px 0;
   font-family: Consolas, monospace;
   font-size: 12px;
 }
@@ -411,6 +523,21 @@ button:hover {
 .tree-node:hover,
 .tree-node.active {
   background: #f2dec9;
+  border-color: #ddc8b1;
+}
+
+.tree-drop-tooltip {
+  position: absolute;
+  z-index: 15000;
+  pointer-events: none;
+  border: 1px solid #cab79f;
+  border-radius: 6px;
+  background: #fff8ee;
+  color: #3b2c1f;
+  font-size: 11px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(31, 22, 14, 0.2);
 }
 
 #liveFrame {
