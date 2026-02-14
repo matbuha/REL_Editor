@@ -8,6 +8,63 @@
   outline-offset: 2px !important;
 }
 
+.rel-inline-add-bar {
+  position: fixed;
+  z-index: 2147483602;
+  height: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms ease-out;
+}
+
+.rel-inline-add-bar.is-visible {
+  opacity: 1;
+}
+
+.rel-inline-add-bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: #1f7fe0;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(17, 41, 74, 0.12);
+}
+
+.rel-inline-add-actions {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid rgba(18, 40, 70, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 14px rgba(11, 24, 44, 0.2);
+  pointer-events: auto;
+}
+
+.rel-inline-add-btn {
+  pointer-events: auto;
+  border: 1px solid rgba(35, 95, 160, 0.35);
+  border-radius: 999px;
+  background: #f5faff;
+  color: #0f375d;
+  font: 11px/1.2 "Segoe UI", Arial, sans-serif;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.rel-inline-add-btn:hover {
+  background: #e4f1ff;
+  border-color: rgba(22, 98, 178, 0.65);
+}
+
 .rel-resize-overlay {
   position: fixed;
   z-index: 2147483600;

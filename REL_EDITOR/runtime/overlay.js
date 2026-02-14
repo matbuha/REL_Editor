@@ -51,6 +51,40 @@
   const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV", "SECTION"]);
   const IS_VITE_PROXY_MODE = String(window.location.pathname || "").startsWith("/vite-proxy");
   const VITE_GLOBAL_STYLE_PROPS = ["background", "background-color", "background-image", "color"];
+  const INLINE_ADD_EDGE_PX = 8;
+  const INLINE_ADD_LAYOUT_TAGS = new Set(["SECTION", "DIV", "MAIN", "ARTICLE", "ASIDE", "NAV", "HEADER", "FOOTER", "FORM"]);
+  const INLINE_ADD_ACTIONS = [
+    {
+      type: "container",
+      label: "+ Container",
+      props: { text: "Container" },
+      tooltip: "Add a container at this edge (before/after target). Example: add a container before section.",
+    },
+    {
+      type: "section",
+      label: "+ Section",
+      props: {},
+      tooltip: "Add a section at this edge (before/after target). Example: add a section after container.",
+    },
+    {
+      type: "heading-h2",
+      label: "+ Heading",
+      props: { text: "Heading H2" },
+      tooltip: "Add a heading block at this edge. Example: insert heading before card row.",
+    },
+    {
+      type: "paragraph",
+      label: "+ Paragraph",
+      props: { text: "Paragraph text" },
+      tooltip: "Add a paragraph block at this edge. Example: add paragraph after heading.",
+    },
+    {
+      type: "image",
+      label: "+ Image",
+      props: { alt: "Image" },
+      tooltip: "Add an image placeholder at this edge. Example: insert image after paragraph.",
+    },
+  ];
   const IMPORTANT_STYLE_PROPS = new Set([
     "background",
     "background-color",
@@ -111,14 +145,26 @@
     viteHeadEnsureRafId: 0,
     viteBodyGlobalStyleValues: {},
     viteBodyGlobalStyleTouched: false,
+    inlineAdd: {
+      root: null,
+      visible: false,
+      targetElement: null,
+      targetRelId: "",
+      targetFallbackSelector: "",
+      placement: "",
+    },
   };
 
   ensureResizerModuleLoaded();
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("keydown", onDocumentKeyDown, true);
+  document.addEventListener("mousemove", onDocumentMouseMove, true);
+  document.addEventListener("mouseleave", onDocumentMouseLeave, true);
   document.addEventListener("dragover", onDocumentDragOver, true);
   document.addEventListener("drop", onDocumentDrop, true);
   document.addEventListener("dragleave", onDocumentDragLeave, true);
+  window.addEventListener("resize", hideInlineAddBar, true);
+  window.addEventListener("scroll", hideInlineAddBar, true);
   window.addEventListener("message", onMessageFromEditor);
 
   blockTopNavigation();
@@ -138,10 +184,11 @@
       return;
     }
 
-    if (target.closest("[data-rel-runtime='overlay-ui']")) {
+    if (target.closest("[data-rel-runtime='overlay-ui'], [data-rel-runtime='inline-add-bar']")) {
       return;
     }
 
+    hideInlineAddBar();
     event.preventDefault();
     event.stopPropagation();
     selectElement(target);
@@ -188,6 +235,8 @@
       return;
     }
 
+    hideInlineAddBar();
+
     const target = resolveDropTarget(event.target);
     if (!target) {
       return;
@@ -203,6 +252,7 @@
       return;
     }
 
+    hideInlineAddBar();
     event.preventDefault();
     event.stopPropagation();
 
@@ -235,6 +285,234 @@
     if (event.target === document.documentElement) {
       clearDropTarget();
     }
+  }
+
+  function onDocumentMouseMove(event) {
+    if (!state.editMode) {
+      hideInlineAddBar();
+      return;
+    }
+    if (state.pendingDragNodeTemplate || document.body?.classList.contains("rel-resizing")) {
+      hideInlineAddBar();
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      hideInlineAddBar();
+      return;
+    }
+
+    if (target.closest('[data-rel-runtime="inline-add-bar"]')) {
+      return;
+    }
+    if (target.closest("[data-rel-runtime='overlay-ui']")) {
+      hideInlineAddBar();
+      return;
+    }
+
+    const hoverElement = resolveInlineAddHoverElement(target);
+    if (!hoverElement) {
+      hideInlineAddBar();
+      return;
+    }
+
+    const rect = hoverElement.getBoundingClientRect();
+    if (!Number.isFinite(rect.top) || rect.height <= 0 || rect.width <= 0) {
+      hideInlineAddBar();
+      return;
+    }
+    const pointerY = Number(event.clientY);
+    if (!Number.isFinite(pointerY) || pointerY < rect.top || pointerY > rect.bottom) {
+      hideInlineAddBar();
+      return;
+    }
+
+    const nearTop = pointerY <= rect.top + INLINE_ADD_EDGE_PX;
+    const nearBottom = pointerY >= rect.bottom - INLINE_ADD_EDGE_PX;
+    if (!nearTop && !nearBottom) {
+      hideInlineAddBar();
+      return;
+    }
+
+    const placement = nearTop ? "before" : "after";
+    showInlineAddBar(hoverElement, placement, rect);
+  }
+
+  function onDocumentMouseLeave() {
+    hideInlineAddBar();
+  }
+
+  function ensureInlineAddBar() {
+    if (state.inlineAdd.root && state.inlineAdd.root.isConnected) {
+      return state.inlineAdd.root;
+    }
+
+    const root = document.createElement("div");
+    root.className = "rel-inline-add-bar";
+    root.dataset.relRuntime = "inline-add-bar";
+    root.setAttribute("aria-hidden", "true");
+
+    const actions = document.createElement("div");
+    actions.className = "rel-inline-add-actions";
+    root.appendChild(actions);
+
+    for (const action of INLINE_ADD_ACTIONS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "rel-inline-add-btn";
+      button.dataset.relInlineAddType = action.type;
+      button.textContent = action.label;
+      button.title = action.tooltip;
+      actions.appendChild(button);
+    }
+
+    root.addEventListener("click", (event) => {
+      const target = event.target;
+      const actionButton = target instanceof Element
+        ? target.closest(".rel-inline-add-btn")
+        : null;
+      if (!(actionButton instanceof HTMLButtonElement)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      applyInlineAddAction(actionButton.dataset.relInlineAddType || "");
+    });
+
+    document.body.appendChild(root);
+    state.inlineAdd.root = root;
+    return root;
+  }
+
+  function showInlineAddBar(targetElement, placement, rect) {
+    if (!(targetElement instanceof Element)) {
+      hideInlineAddBar();
+      return;
+    }
+
+    const root = ensureInlineAddBar();
+    const edgeY = placement === "before" ? rect.top : rect.bottom;
+    root.style.left = `${Math.round(rect.left)}px`;
+    root.style.width = `${Math.max(40, Math.round(rect.width))}px`;
+    root.style.top = `${Math.round(edgeY)}px`;
+    root.dataset.placement = placement === "before" ? "before" : "after";
+    root.classList.add("is-visible");
+    root.setAttribute("aria-hidden", "false");
+
+    state.inlineAdd.visible = true;
+    state.inlineAdd.targetElement = targetElement;
+    state.inlineAdd.targetRelId = ensureRelId(targetElement);
+    state.inlineAdd.targetFallbackSelector = buildStableSelector(targetElement);
+    state.inlineAdd.placement = placement === "before" ? "before" : "after";
+  }
+
+  function hideInlineAddBar() {
+    const root = state.inlineAdd.root;
+    if (root instanceof HTMLElement) {
+      root.classList.remove("is-visible");
+      root.removeAttribute("data-placement");
+      root.setAttribute("aria-hidden", "true");
+    }
+    state.inlineAdd.visible = false;
+    state.inlineAdd.targetElement = null;
+    state.inlineAdd.targetRelId = "";
+    state.inlineAdd.targetFallbackSelector = "";
+    state.inlineAdd.placement = "";
+  }
+
+  function resolveInlineAddHoverElement(rawTarget) {
+    const start = rawTarget instanceof Element ? rawTarget : null;
+    if (!start) {
+      return null;
+    }
+
+    let cursor = start;
+    while (cursor) {
+      if (isInlineAddEligibleElement(cursor)) {
+        return cursor;
+      }
+      cursor = cursor.parentElement;
+    }
+    return null;
+  }
+
+  function isInlineAddEligibleElement(element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+    if (SKIP_TAGS.has(element.tagName)) {
+      return false;
+    }
+    if (element.tagName === "BODY") {
+      return false;
+    }
+    if (isProtectedElement(element) || isEditorSystemElement(element)) {
+      return false;
+    }
+    if (!canContainChildren(element)) {
+      return false;
+    }
+
+    const tagName = element.tagName.toUpperCase();
+    if (tagName === "SECTION") {
+      return true;
+    }
+
+    const classValue = String(element.className || "").toLowerCase();
+    if (classValue.includes("container")) {
+      return true;
+    }
+
+    return INLINE_ADD_LAYOUT_TAGS.has(tagName);
+  }
+
+  function applyInlineAddAction(rawType) {
+    const type = String(rawType || "").trim().toLowerCase();
+    if (!type || !state.inlineAdd.targetElement || !state.inlineAdd.placement) {
+      return;
+    }
+
+    const targetElement = state.inlineAdd.targetElement;
+    if (!(targetElement instanceof Element)) {
+      hideInlineAddBar();
+      return;
+    }
+
+    const action = INLINE_ADD_ACTIONS.find((item) => item.type === type);
+    if (!action) {
+      return;
+    }
+
+    const targetRelId = state.inlineAdd.targetRelId || ensureRelId(targetElement);
+    let placement = state.inlineAdd.placement === "before" ? "before" : "after";
+    // Fallback: for empty containers/layout nodes, bottom-edge add should place inside.
+    if (
+      placement === "after"
+      && canContainChildren(targetElement)
+      && targetElement.children.length === 0
+    ) {
+      placement = "inside";
+    }
+    const parent = targetElement.parentElement;
+    const parentRelId = parent ? ensureRelId(parent) : "";
+    const nodeDescriptor = {
+      nodeId: generateNodeId(),
+      relId: generateRelId(),
+      type: action.type,
+      position: placement,
+      parentRelId: placement === "inside" ? targetRelId : parentRelId,
+      targetRelId,
+      targetFallbackSelector: state.inlineAdd.targetFallbackSelector || buildStableSelector(targetElement),
+      props: action.props || {},
+    };
+
+    const created = ensureAddedNode(nodeDescriptor, true);
+    if (created) {
+      postToEditor({ type: "REL_NODE_ADDED", payload: { node: created } });
+      postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    }
+    hideInlineAddBar();
   }
 
   function onMessageFromEditor(event) {
@@ -335,6 +613,7 @@
     }
 
     if (message.type === "REL_SET_DRAG_COMPONENT") {
+      hideInlineAddBar();
       state.pendingDragNodeTemplate = message.payload && message.payload.nodeTemplate
         ? message.payload.nodeTemplate
         : null;
@@ -343,6 +622,7 @@
 
     if (message.type === "REL_CLEAR_DRAG_COMPONENT") {
       state.pendingDragNodeTemplate = null;
+      hideInlineAddBar();
       clearDropTarget();
       return;
     }
@@ -952,7 +1232,9 @@
           relId: ensureRelId(existingByNodeId, node.relId),
           parentRelId: ensureRelId(existingByNodeId.parentElement || document.body),
           type: node.type,
-          position: "append",
+          position: node.position,
+          targetRelId: node.targetRelId,
+          targetFallbackSelector: node.targetFallbackSelector,
           props: node.props,
           fallbackSelector: buildStableSelector(existingByNodeId),
           stableSelector: buildStableSelector(existingByNodeId),
@@ -972,7 +1254,9 @@
           relId: node.relId,
           parentRelId: ensureRelId(existingByRelId.parentElement || document.body),
           type: node.type,
-          position: "append",
+          position: node.position,
+          targetRelId: node.targetRelId,
+          targetFallbackSelector: node.targetFallbackSelector,
           props: node.props,
           fallbackSelector: buildStableSelector(existingByRelId),
           stableSelector: buildStableSelector(existingByRelId),
@@ -980,8 +1264,8 @@
       }
     }
 
-    const parent = resolveParentForNode(node.parentRelId);
-    if (!parent) {
+    const insertion = resolveInsertionForAddedNode(node);
+    if (!insertion || !insertion.parent) {
       return null;
     }
 
@@ -994,19 +1278,29 @@
     const finalNodeId = node.nodeId || generateNodeId();
     element.dataset.relAddedNodeId = finalNodeId;
     element.dataset.relManaged = "1";
-    parent.appendChild(element);
+    insertion.parent.insertBefore(element, insertion.referenceNode);
     state.appliedAddedNodeIds.add(finalNodeId);
 
     if (selectAfterCreate) {
       selectElement(element);
     }
 
+    const parentElement = insertion.parent instanceof Element
+      ? insertion.parent
+      : (document.body || document.documentElement);
+    const targetElement = insertion.targetElement instanceof Element
+      ? insertion.targetElement
+      : null;
+    const finalPosition = normalizeAddedNodePosition(insertion.position || node.position);
+
     return {
       nodeId: finalNodeId,
       relId: finalRelId,
-      parentRelId: ensureRelId(parent),
+      parentRelId: ensureRelId(parentElement),
       type: node.type,
-      position: "append",
+      position: finalPosition,
+      targetRelId: targetElement ? ensureRelId(targetElement, node.targetRelId) : node.targetRelId,
+      targetFallbackSelector: targetElement ? buildStableSelector(targetElement) : node.targetFallbackSelector,
       props: node.props,
       fallbackSelector: buildStableSelector(element),
       stableSelector: buildStableSelector(element),
@@ -1025,8 +1319,66 @@
       nodeId: String(nodeDescriptor.nodeId || "").trim(),
       relId: String(nodeDescriptor.relId || "").trim(),
       type,
+      position: normalizeAddedNodePosition(nodeDescriptor.position),
       parentRelId: String(nodeDescriptor.parentRelId || "").trim(),
+      parentFallbackSelector: String(nodeDescriptor.parentFallbackSelector || "").trim(),
+      targetRelId: String(nodeDescriptor.targetRelId || "").trim(),
+      targetFallbackSelector: String(nodeDescriptor.targetFallbackSelector || "").trim(),
       props: nodeDescriptor.props && typeof nodeDescriptor.props === "object" ? nodeDescriptor.props : {},
+    };
+  }
+
+  function normalizeAddedNodePosition(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "before" || normalized === "after" || normalized === "inside") {
+      return normalized;
+    }
+    return "append";
+  }
+
+  function resolveInsertionForAddedNode(node) {
+    const position = normalizeAddedNodePosition(node.position);
+    const target = resolveElementByReference(node.targetRelId, node.targetFallbackSelector);
+
+    if (position === "before" || position === "after") {
+      if (
+        target instanceof Element
+        && !isProtectedElement(target)
+        && !isEditorSystemElement(target)
+        && target.parentNode instanceof Node
+      ) {
+        return {
+          parent: target.parentNode,
+          referenceNode: position === "before" ? target : target.nextSibling,
+          position,
+          targetElement: target,
+        };
+      }
+    }
+
+    if (position === "inside") {
+      const insideTarget = target instanceof Element
+        ? target
+        : resolveElementByReference(node.parentRelId, node.parentFallbackSelector);
+      if (insideTarget instanceof Element && canContainChildren(insideTarget)) {
+        return {
+          parent: insideTarget,
+          referenceNode: null,
+          position: "inside",
+          targetElement: insideTarget,
+        };
+      }
+    }
+
+    const fallbackParent = resolveParentForNode(node.parentRelId);
+    if (!fallbackParent) {
+      return null;
+    }
+    return {
+      parent: fallbackParent,
+      referenceNode: null,
+      position: "append",
+      targetElement: null,
     };
   }
 
