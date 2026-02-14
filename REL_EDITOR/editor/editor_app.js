@@ -201,6 +201,12 @@
   const RIGHT_MIN_PX = 260;
   const CENTER_MIN_PX = 320;
   const RESIZER_TOTAL_PX = 16;
+  const TOOLTIP_DEV_CHECK_DELAY_MS = 200;
+  const TOOLTIP_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  const TOOLTIP_ALLOWLIST_SELECTORS = [
+    "input[type=\"file\"][hidden]",
+    "#uploadImageInput",
+  ];
 
   const state = {
     projectRoot: "",
@@ -270,6 +276,11 @@
       pendingClientX: 0,
       moveHandler: null,
       upHandler: null,
+    },
+    tooltip: {
+      devCheckTimer: 0,
+      warnedMissing: new Set(),
+      warnedUnknownKeys: new Set(),
     },
     controls: {
       styleInputs: {},
@@ -414,6 +425,7 @@
     setupTabs();
     buildStyleControls();
     buildThemeManagerUi();
+    setupTooltipSystem();
     clearSelectionUi();
     bindEvents();
     initResizableLayout();
@@ -426,6 +438,213 @@
     buildAddPanel();
     ensureViteStatusSocket();
     loadIframe();
+    scheduleTooltipCoverageCheck();
+  }
+
+  function setupTooltipSystem() {
+    applyStaticTooltipKeys();
+    const manager = window.REL_TOOLTIP_MANAGER;
+    if (manager && typeof manager.init === "function") {
+      manager.init({
+        registry: window.REL_TOOLTIPS_REGISTRY || {},
+      });
+    }
+    scheduleTooltipCoverageCheck();
+  }
+
+  function applyStaticTooltipKeys() {
+    const staticMappings = [
+      [dom.projectRootInput, "top.projectRoot"],
+      [dom.projectTypeSelect, "top.projectType"],
+      [dom.indexPathInput, "top.indexPath"],
+      [dom.devUrlInput, "top.devUrl"],
+      [dom.startDevServerBtn, "top.startDevServer"],
+      [dom.stopDevServerBtn, "top.stopDevServer"],
+      [dom.loadProjectBtn, "top.loadProject"],
+      [dom.savePatchBtn, "top.savePatch"],
+      [dom.exportSafeBtn, "top.exportSafe"],
+      [dom.resetLayoutBtn, "top.resetLayout"],
+      [dom.designLibrarySelect, "top.designLibrary"],
+      [dom.bootstrapJsCheckbox, "top.bootstrapJs"],
+      [dom.iconSetSelect, "top.iconSet"],
+      [dom.animateCssCheckbox, "top.animateCss"],
+      [dom.fontLibrarySelect, "top.fontLibrary"],
+      [dom.fontLibraryFamilyInput, "top.fontFamilyInput"],
+      [dom.addFontFamilyBtn, "top.addFont"],
+      [dom.treeSearchInput, "tree.search"],
+      [dom.refreshTreeBtn, "tree.refresh"],
+      [dom.attrIdInput, "inspector.attr.id"],
+      [dom.attrClassInput, "inspector.attr.class"],
+      [dom.deleteElementBtn, "inspector.delete"],
+      [dom.makeLinkCheckbox, "link.toggle"],
+      [dom.linkHrefInput, "link.href"],
+      [dom.linkTargetInput, "link.target"],
+      [dom.linkRelInput, "link.rel"],
+      [dom.linkTitleInput, "link.title"],
+      [dom.textContentInput, "text.content"],
+      [dom.applyTextBtn, "text.apply"],
+      [dom.imageSrcInput, "image.src"],
+      [dom.imageAltInput, "image.alt"],
+      [dom.imageWidthInput, "image.width"],
+      [dom.imageHeightInput, "image.height"],
+      [dom.imageObjectFitInput, "image.objectFit"],
+      [dom.imageBorderRadiusInput, "image.borderRadius"],
+      [dom.imageDisplayInput, "image.display"],
+      [dom.uploadImageBtn, "image.upload"],
+      [dom.themePresetSelect, "theme.preset"],
+      [dom.themeNameInput, "theme.name"],
+      [dom.newThemePresetBtn, "theme.new"],
+      [dom.saveThemePresetBtn, "theme.save"],
+      [dom.deleteThemePresetBtn, "theme.delete"],
+      [dom.addCustomColorBtn, "theme.addCustomColor"],
+      [dom.paletteColorSelect, "theme.palette.color"],
+      [dom.paletteBackgroundSelect, "theme.palette.background"],
+      [dom.paletteBorderSelect, "theme.palette.border"],
+      [dom.applyPaletteToSelectedBtn, "theme.applyPaletteSelected"],
+      [dom.themeBodyFontSelect, "theme.bodyFont"],
+      [dom.themeHeadingFontSelect, "theme.headingFont"],
+      [dom.themeBodySizeInput, "theme.bodySize"],
+      [dom.themeH1SizeInput, "theme.h1Size"],
+      [dom.themeH2SizeInput, "theme.h2Size"],
+      [dom.themeH3SizeInput, "theme.h3Size"],
+      [dom.themeSmallSizeInput, "theme.smallSize"],
+      [dom.themeLineHeightInput, "theme.lineHeight"],
+      [dom.themeLoadFontsBtn, "theme.loadFonts"],
+      [dom.applyFontsGloballyBtn, "theme.applyFontsGlobally"],
+      [dom.applyThemeToPageBtn, "theme.applyThemeToPage"],
+      [dom.leftResizer, "layout.leftResizer"],
+      [dom.rightResizer, "layout.rightResizer"],
+    ];
+
+    for (const [element, key] of staticMappings) {
+      setTooltipKey(element, key);
+    }
+  }
+
+  function setTooltipKey(element, key) {
+    if (!(element instanceof Element)) {
+      return;
+    }
+    const safeKey = String(key || "").trim();
+    if (!safeKey) {
+      return;
+    }
+    element.setAttribute("data-tooltip-key", safeKey);
+  }
+
+  function resolveStyleTooltipKey(property) {
+    const safeProperty = String(property || "").trim().toLowerCase();
+    if (!safeProperty) {
+      return "generic.input";
+    }
+    if (safeProperty.startsWith("padding-")) {
+      return "style.padding";
+    }
+    if (safeProperty.startsWith("margin-")) {
+      return "style.margin";
+    }
+    if (safeProperty === "vertical-align-content") {
+      return "style.verticalAlignContent";
+    }
+    return `style.${safeProperty}`;
+  }
+
+  function isTooltipDevMode() {
+    const host = String(window.location.hostname || "").trim().toLowerCase();
+    if (TOOLTIP_DEV_HOSTS.has(host)) {
+      return true;
+    }
+    return host.endsWith(".local");
+  }
+
+  function scheduleTooltipCoverageCheck() {
+    if (!isTooltipDevMode()) {
+      return;
+    }
+    if (state.tooltip.devCheckTimer) {
+      clearTimeout(state.tooltip.devCheckTimer);
+    }
+    state.tooltip.devCheckTimer = window.setTimeout(() => {
+      state.tooltip.devCheckTimer = 0;
+      runTooltipCoverageCheck();
+    }, TOOLTIP_DEV_CHECK_DELAY_MS);
+  }
+
+  function runTooltipCoverageCheck() {
+    const registry = window.REL_TOOLTIPS_REGISTRY || {};
+    const selector = "button, input:not([type=\"hidden\"]), select, textarea, [role=\"button\"], .panel-resizer, .tree-node, .add-item";
+    const nodes = Array.from(document.querySelectorAll(selector));
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement)) {
+        continue;
+      }
+      if (isTooltipAllowlisted(node)) {
+        continue;
+      }
+      const key = String(node.getAttribute("data-tooltip-key") || "").trim();
+      if (!key) {
+        const signature = describeTooltipNode(node);
+        if (!state.tooltip.warnedMissing.has(signature)) {
+          state.tooltip.warnedMissing.add(signature);
+          console.warn(`[REL TOOLTIP] Missing data-tooltip-key for ${signature}`);
+        }
+        continue;
+      }
+      if (!hasTooltipRegistryEntry(key, registry)) {
+        const signature = `${key}::${describeTooltipNode(node)}`;
+        if (!state.tooltip.warnedUnknownKeys.has(signature)) {
+          state.tooltip.warnedUnknownKeys.add(signature);
+          console.warn(`[REL TOOLTIP] Missing tooltip registry entry for key "${key}" (${describeTooltipNode(node)})`);
+        }
+      }
+    }
+  }
+
+  function isTooltipAllowlisted(node) {
+    if (!(node instanceof HTMLElement)) {
+      return true;
+    }
+    if (node.hidden || node.closest(".hidden")) {
+      return true;
+    }
+    for (const selector of TOOLTIP_ALLOWLIST_SELECTORS) {
+      if (selector && node.matches(selector)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function hasTooltipRegistryEntry(key, registry) {
+    if (Object.prototype.hasOwnProperty.call(registry, key)) {
+      return true;
+    }
+    if (key.startsWith("style.")) {
+      return true;
+    }
+    if (key.startsWith("add.")) {
+      return true;
+    }
+    if (key.startsWith("generic.")) {
+      return true;
+    }
+    return false;
+  }
+
+  function describeTooltipNode(node) {
+    const id = String(node.id || "").trim();
+    if (id) {
+      return `#${id}`;
+    }
+    const key = String(node.getAttribute("data-tooltip-key") || "").trim();
+    if (key) {
+      return `[data-tooltip-key="${key}"]`;
+    }
+    const text = String(node.textContent || "").trim().slice(0, 28);
+    if (text) {
+      return `${node.tagName.toLowerCase()}("${text}")`;
+    }
+    return node.tagName.toLowerCase();
   }
 
   function bindEvents() {
@@ -671,6 +890,10 @@
     const contents = Array.from(document.querySelectorAll("[data-tab-content]"));
 
     for (const btn of buttons) {
+      const tabKey = String(btn.getAttribute("data-tab") || "").trim().toLowerCase();
+      if (tabKey) {
+        setTooltipKey(btn, `tab.${tabKey}`);
+      }
       btn.addEventListener("click", () => {
         const key = btn.getAttribute("data-tab");
         for (const b of buttons) {
@@ -679,6 +902,7 @@
         for (const c of contents) {
           c.classList.toggle("active", c.getAttribute("data-tab-content") === key);
         }
+        scheduleTooltipCoverageCheck();
       });
     }
   }
@@ -688,6 +912,7 @@
     renderThemePresetOptions();
     renderPaletteVarOptions();
     rebuildThemeFontPresetOptions();
+    scheduleTooltipCoverageCheck();
   }
 
   function syncThemeUiFromState() {
@@ -740,6 +965,7 @@
       empty.className = "theme-empty";
       empty.textContent = "No custom colors";
       dom.themeCustomPaletteList.appendChild(empty);
+      scheduleTooltipCoverageCheck();
       return;
     }
 
@@ -748,6 +974,7 @@
       dom.themeCustomPaletteList.appendChild(row.root);
       state.controls.themeCustomRows[key] = row;
     }
+    scheduleTooltipCoverageCheck();
   }
 
   function createThemeColorRow(labelText, colorKey, colorValue, isCustom) {
@@ -764,10 +991,12 @@
     const input = document.createElement("input");
     input.type = "text";
     input.value = colorValue;
+    setTooltipKey(input, "theme.color.value");
 
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.textContent = "Copy";
+    setTooltipKey(copyBtn, "theme.color.copy");
 
     root.appendChild(label);
     root.appendChild(swatch);
@@ -779,6 +1008,7 @@
       removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.textContent = "Remove";
+      setTooltipKey(removeBtn, "theme.color.remove");
       root.appendChild(removeBtn);
       removeBtn.addEventListener("click", () => {
         deleteCustomThemeColor(colorKey);
@@ -1299,6 +1529,7 @@
       state.controls.verticalAlignSelect.value = "";
       state.controls.verticalAlignSelect.disabled = true;
     }
+    scheduleTooltipCoverageCheck();
   }
 
   function buildSimpleStyleControl(container, control) {
@@ -1310,6 +1541,7 @@
     caption.textContent = control.label;
 
     const input = createSimpleControlInput(control);
+    setTooltipKey(input, resolveStyleTooltipKey(control.property));
     const eventName = control.type === "select" ? "change" : "input";
     input.addEventListener(eventName, () => {
       applyStyle(control.property, input.value);
@@ -1344,10 +1576,12 @@
     input.addEventListener("change", () => {
       applyLayerOrderFromControl(input.value);
     });
+    setTooltipKey(input, "style.order");
 
     const resetBtn = document.createElement("button");
     resetBtn.type = "button";
     resetBtn.textContent = "Reset";
+    setTooltipKey(resetBtn, "style.orderReset");
     resetBtn.addEventListener("click", () => {
       input.value = "0";
       applyLayerOrderFromControl("0");
@@ -1390,6 +1624,7 @@
     caption.textContent = control.label;
 
     const select = document.createElement("select");
+    setTooltipKey(select, "style.font-family");
     select.addEventListener("change", () => {
       applyStyle("font-family", select.value);
       updateFontLoadingWarning(resolvePrimaryFontFamily(select.value));
@@ -1405,6 +1640,7 @@
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Load Font";
+    setTooltipKey(button, "style.fontLoadWarning");
     button.addEventListener("click", () => {
       autoLoadPendingFontFamily();
     });
@@ -1427,6 +1663,7 @@
     caption.textContent = control.label;
 
     const select = document.createElement("select");
+    setTooltipKey(select, "style.verticalAlignContent");
     const options = [
       { value: "", label: "(empty)" },
       { value: "top", label: "top" },
@@ -1467,6 +1704,7 @@
     solidRadio.name = radioName;
     solidRadio.value = "solid";
     solidRadio.checked = true;
+    setTooltipKey(solidRadio, "style.backgroundModeSolid");
     const solidText = document.createElement("span");
     solidText.textContent = "Solid";
     solidLabel.appendChild(solidRadio);
@@ -1478,6 +1716,7 @@
     gradientRadio.type = "radio";
     gradientRadio.name = radioName;
     gradientRadio.value = "gradient";
+    setTooltipKey(gradientRadio, "style.backgroundModeGradient");
     const gradientText = document.createElement("span");
     gradientText.textContent = "Gradient";
     gradientLabel.appendChild(gradientRadio);
@@ -1489,6 +1728,7 @@
     imageRadio.type = "radio";
     imageRadio.name = radioName;
     imageRadio.value = "image";
+    setTooltipKey(imageRadio, "style.backgroundModeImage");
     const imageText = document.createElement("span");
     imageText.textContent = "Image";
     imageLabel.appendChild(imageRadio);
@@ -1507,6 +1747,7 @@
     const solidInput = document.createElement("input");
     solidInput.type = "color";
     solidInput.value = "#ffffff";
+    setTooltipKey(solidInput, "style.backgroundSolid");
     solidInput.addEventListener("input", () => {
       if (state.controls.backgroundType !== "solid") {
         setBackgroundType("solid", true);
@@ -1524,6 +1765,7 @@
     gradientCaption.textContent = "Gradient CSS";
     const gradientInput = document.createElement("textarea");
     gradientInput.placeholder = "linear-gradient(0deg, #df1111, #000000)";
+    setTooltipKey(gradientInput, "style.backgroundGradient");
     gradientInput.addEventListener("input", () => {
       if (state.controls.backgroundType !== "gradient") {
         setBackgroundType("gradient", true);
@@ -1541,6 +1783,7 @@
     imageToggleRow.className = "check-row";
     const imageToggle = document.createElement("input");
     imageToggle.type = "checkbox";
+    setTooltipKey(imageToggle, "style.backgroundImageToggle");
     const imageToggleText = document.createElement("span");
     imageToggleText.textContent = "Use background image";
     imageToggleRow.appendChild(imageToggle);
@@ -1552,10 +1795,12 @@
     const imageUploadBtn = document.createElement("button");
     imageUploadBtn.type = "button";
     imageUploadBtn.textContent = "Choose Image";
+    setTooltipKey(imageUploadBtn, "style.backgroundImageUpload");
     const imageUploadInput = document.createElement("input");
     imageUploadInput.type = "file";
     imageUploadInput.accept = "image/*";
     imageUploadInput.hidden = true;
+    setTooltipKey(imageUploadInput, "style.backgroundImageUpload");
     imageUploadRow.appendChild(imageUploadBtn);
     imageUploadRow.appendChild(imageUploadInput);
     imageGroup.appendChild(imageUploadRow);
@@ -1568,6 +1813,7 @@
     const imageUrlInput = document.createElement("input");
     imageUrlInput.type = "text";
     imageUrlInput.placeholder = "REL_assets/background.png or https://...";
+    setTooltipKey(imageUrlInput, "style.backgroundImageUrl");
     imageUrlRow.appendChild(imageUrlCaption);
     imageUrlRow.appendChild(imageUrlInput);
     imageGroup.appendChild(imageUrlRow);
@@ -1578,6 +1824,7 @@
     const imageSizeCaption = document.createElement("span");
     imageSizeCaption.textContent = "background-size";
     const imageSizeInput = document.createElement("select");
+    setTooltipKey(imageSizeInput, "style.backgroundSize");
     for (const optionValue of BG_SIZE_OPTIONS) {
       const option = document.createElement("option");
       option.value = optionValue;
@@ -1594,6 +1841,7 @@
     const imagePositionCaption = document.createElement("span");
     imagePositionCaption.textContent = "background-position";
     const imagePositionInput = document.createElement("select");
+    setTooltipKey(imagePositionInput, "style.backgroundPosition");
     for (const optionValue of BG_POSITION_OPTIONS) {
       const option = document.createElement("option");
       option.value = optionValue;
@@ -1610,6 +1858,7 @@
     const imageRepeatCaption = document.createElement("span");
     imageRepeatCaption.textContent = "background-repeat";
     const imageRepeatInput = document.createElement("select");
+    setTooltipKey(imageRepeatInput, "style.backgroundRepeat");
     for (const optionValue of BG_REPEAT_OPTIONS) {
       const option = document.createElement("option");
       option.value = optionValue;
@@ -1625,6 +1874,7 @@
     const clearImageBtn = document.createElement("button");
     clearImageBtn.type = "button";
     clearImageBtn.textContent = "Clear image";
+    setTooltipKey(clearImageBtn, "style.backgroundClearImage");
     imageActionsRow.appendChild(clearImageBtn);
     imageGroup.appendChild(imageActionsRow);
 
@@ -2018,6 +2268,7 @@
     enableRow.className = "check-row";
     const enableInput = document.createElement("input");
     enableInput.type = "checkbox";
+    setTooltipKey(enableInput, "style.shadow.enable");
     const enableText = document.createElement("span");
     enableText.textContent = "Enable shadow";
     enableRow.appendChild(enableInput);
@@ -2029,6 +2280,7 @@
     const targetLabel = document.createElement("span");
     targetLabel.textContent = "Target";
     const targetSelect = document.createElement("select");
+    setTooltipKey(targetSelect, "style.shadow.target");
     const boxOption = document.createElement("option");
     boxOption.value = "box";
     boxOption.textContent = "Box shadow";
@@ -2046,6 +2298,7 @@
     const presetLabel = document.createElement("span");
     presetLabel.textContent = "Preset";
     const presetSelect = document.createElement("select");
+    setTooltipKey(presetSelect, "style.shadow.preset");
     const presetOptions = [
       { value: "none", label: "None" },
       { value: "soft", label: "Soft" },
@@ -2071,6 +2324,7 @@
     const rawInput = document.createElement("input");
     rawInput.type = "text";
     rawInput.placeholder = "0px 6px 18px 0px rgba(0,0,0,0.2)";
+    setTooltipKey(rawInput, "style.shadow.raw");
     rawRow.appendChild(rawLabel);
     rawRow.appendChild(rawInput);
     root.appendChild(rawRow);
@@ -2093,6 +2347,7 @@
       const input = document.createElement("input");
       input.type = "text";
       input.placeholder = item.placeholder;
+      setTooltipKey(input, `style.shadow.${item.key}`);
       row.appendChild(label);
       row.appendChild(input);
       advancedGrid.appendChild(row);
@@ -2104,6 +2359,7 @@
     insetRow.className = "check-row";
     const insetInput = document.createElement("input");
     insetInput.type = "checkbox";
+    setTooltipKey(insetInput, "style.shadow.inset");
     const insetText = document.createElement("span");
     insetText.textContent = "Inset";
     insetRow.appendChild(insetInput);
@@ -2531,6 +2787,7 @@
       item.className = "add-item";
       item.draggable = true;
       item.setAttribute("data-component-type", component.type);
+      setTooltipKey(item, markExternal ? "add.external" : `add.${component.type}`);
 
       const name = document.createElement("div");
       name.className = "add-item-name";
@@ -2567,6 +2824,7 @@
 
       container.appendChild(item);
     }
+    scheduleTooltipCoverageCheck();
   }
 
   function createNodeTemplate(component) {
@@ -4153,6 +4411,7 @@
       btn.style.paddingLeft = `${8 + item.depth * 12}px`;
       btn.textContent = formatTreeLabel(item);
       btn.setAttribute("data-rel-id", item.relId);
+      setTooltipKey(btn, "tree.node");
       btn.addEventListener("click", () => {
         sendToOverlay({
           type: "REL_SELECT_BY_REL_ID",
@@ -4162,6 +4421,7 @@
 
       dom.treeContainer.appendChild(btn);
     }
+    scheduleTooltipCoverageCheck();
   }
 
   function matchesTreeNode(node, query) {

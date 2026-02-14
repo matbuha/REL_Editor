@@ -1,4 +1,68 @@
-REL_EDITOR/server/node_modules/
-demo_project/rel_editor/
-demo_project/REL_*.html
-demo_project/REL_*.css
+# =========================
+# Global system files
+# =========================
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.temp
+
+# =========================
+# Node
+# =========================
+node_modules/
+**/node_modules/
+
+# =========================
+# Build output
+# =========================
+dist/
+build/
+out/
+coverage/
+
+# =========================
+# Editor generated output
+# =========================
+**/rel_editor/
+**/rel_assets/
+**/REL_*.html
+**/REL_*.css
+!REL_EDITOR/
+!REL_EDITOR/editor/
+!REL_EDITOR/editor/tooltips_registry.js
+!REL_EDITOR/editor/tooltip_manager.js
+
+# =========================
+# Demo projects (local only)
+# =========================
+demo-vite-react/
+demo-vite-react/**
+
+# =========================
+# IDE
+# =========================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# =========================
+# OS / OneDrive / Windows
+# =========================
+OneDrive*/
+desktop.ini
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.local
+.env.*
+
+
+
+.codex_rules.local.md
+.codex_context.local.md

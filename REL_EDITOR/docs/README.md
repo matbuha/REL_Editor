@@ -100,6 +100,26 @@ When saving, files are created under the selected project root:
 12. Save patch and verify `demo_project/rel_editor/patch.json` and `demo_project/rel_editor/override.css`.
 13. Click **Export Safe** and verify `demo_project/REL_index.html` exists.
 
+## Tooltip engineering rule
+
+Any new UI control must include:
+- `data-tooltip-key` on the interactive element (`button`, `input`, `select`, `textarea`, draggable control, etc.)
+- A matching tooltip registry entry in `REL_EDITOR/editor/tooltips_registry.js` with:
+  - `title`
+  - `description`
+  - valid `formats`
+  - `examples`
+  - optional `notes`
+
+In local development (`localhost` / `127.0.0.1`), REL_EDITOR logs warnings for controls missing tooltip keys or missing registry entries.
+
+## Tooltip manual test checklist
+
+1. Hover a `width` or `height` style field for 600ms and verify formats/examples include `100vw`, `100vh`, `%`, `px`, and `auto`.
+2. Hover **Start Dev Server** for 600ms and verify tooltip explains the action.
+3. Use keyboard `Tab` to focus a control and verify tooltip appears after 600ms; press `Escape` and verify it closes.
+4. Move mouse quickly across controls and verify tooltips do not flicker or spam.
+
 ## Notes
 
 - This is a local-only tool.

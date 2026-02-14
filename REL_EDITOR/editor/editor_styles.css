@@ -753,6 +753,48 @@ button:hover {
   margin-left: 6px;
 }
 
+.rel-tooltip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  max-width: 320px;
+  z-index: 20020;
+  pointer-events: none;
+  border: 1px solid #cebca8;
+  border-radius: 8px;
+  background: #fffaf3;
+  box-shadow: 0 10px 24px rgba(43, 32, 21, 0.22);
+  color: #2c241d;
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.rel-tooltip-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.rel-tooltip-description {
+  margin-bottom: 6px;
+}
+
+.rel-tooltip-label {
+  font-weight: 600;
+  color: #624b35;
+  margin-top: 6px;
+}
+
+.rel-tooltip-list {
+  margin: 4px 0 0 16px;
+  padding: 0;
+}
+
+.rel-tooltip-list li {
+  margin: 2px 0;
+}
+
 @media (max-width: 1200px) {
   .layout {
     display: grid;
