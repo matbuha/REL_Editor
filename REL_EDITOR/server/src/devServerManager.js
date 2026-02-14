@@ -1,11 +1,15 @@
 const fs = require("fs/promises");
 const path = require("path");
+const net = require("net");
 const { spawn } = require("child_process");
 const { URL } = require("url");
 
 const DEFAULT_VITE_DEV_URL = "http://localhost:5173";
+const DEFAULT_VITE_PORT = 5173;
 const VITE_DISCOVERY_MAX_DEPTH = 3;
 const IGNORED_DISCOVERY_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
+const DEV_SERVER_LOG_LIMIT = 120;
+const PORT_SCAN_ATTEMPTS = 30;
 
 class DevServerManager {
   constructor(options) {
@@ -20,6 +24,11 @@ class DevServerManager {
     this.starting = false;
     this.lastError = "";
     this.stopping = false;
+    this.pid = null;
+    this.preferredPort = parsedDefault.port;
+    this.portAutoSelected = false;
+    this.logLines = [];
+    this.outputCleanup = null;
     this.expectedStopPids = new Set();
     this.operationQueue = Promise.resolve();
   }
@@ -35,10 +44,33 @@ class DevServerManager {
       starting: this.starting,
       phase: this.resolvePhase(),
       port: this.port || null,
+      preferred_port: this.preferredPort || null,
+      port_auto_selected: this.portAutoSelected,
+      pid: this.pid || null,
       dev_url: this.devUrl,
       project_root: this.projectRoot,
       last_error: this.lastError,
+      log_lines: this.logLines.slice(-25),
     };
+  }
+
+  clearLogs() {
+    this.logLines = [];
+  }
+
+  pushLog(line) {
+    const safeLine = stripAnsi(String(line || "").trim());
+    if (!safeLine) {
+      return;
+    }
+    pushTail(this.logLines, safeLine, DEV_SERVER_LOG_LIMIT);
+  }
+
+  detachOutputCapture() {
+    if (typeof this.outputCleanup === "function") {
+      this.outputCleanup();
+    }
+    this.outputCleanup = null;
   }
 
   async start(options) {
@@ -121,12 +153,35 @@ class DevServerManager {
       await this.stopInternal();
     }
 
+    this.clearLogs();
     this.lastError = "";
     this.projectRoot = effectiveProjectRoot;
+    this.preferredPort = requested.port;
+    this.portAutoSelected = false;
     this.devUrl = requested.devUrl;
     this.port = requested.port;
+    this.pid = null;
+    this.pushLog(`[REL VITE] Using project root: ${effectiveProjectRoot}`);
+    this.pushLog(`[REL VITE] Requested dev server URL: ${requested.devUrl}`);
 
     await ensureDependenciesInstalled(effectiveProjectRoot, this);
+
+    const resolvedPort = await findNextAvailablePort(requested.port, PORT_SCAN_ATTEMPTS);
+    const launchConfig = {
+      ...requested,
+      port: resolvedPort,
+      devUrl: `${requested.protocol}//${requested.host}:${resolvedPort}`,
+    };
+    if (resolvedPort !== requested.port) {
+      this.portAutoSelected = true;
+      this.pushLog(
+        `[REL VITE] Preferred port ${requested.port} is busy. Using next free port ${resolvedPort}.`
+      );
+    } else {
+      this.pushLog(`[REL VITE] Using preferred port ${resolvedPort}.`);
+    }
+    this.devUrl = launchConfig.devUrl;
+    this.port = launchConfig.port;
 
     this.starting = true;
     this.installing = false;
@@ -137,10 +192,9 @@ class DevServerManager {
       "dev",
       "--",
       "--host",
-      requested.host,
+      launchConfig.host,
       "--port",
-      String(requested.port),
-      "--strictPort",
+      String(launchConfig.port),
     ]);
 
     const child = spawn(npmRunDev.command, npmRunDev.args, {
@@ -152,11 +206,20 @@ class DevServerManager {
     });
 
     this.process = child;
+    this.pid = Number.isFinite(Number(child.pid)) ? Number(child.pid) : null;
+    this.detachOutputCapture();
+    this.outputCleanup = attachProcessOutput(child, (line) => {
+      this.pushLog(line);
+    });
 
     child.once("exit", (code, signal) => {
       if (this.process === child) {
         this.process = null;
       }
+      if (this.pid === Number(child.pid)) {
+        this.pid = null;
+      }
+      this.detachOutputCapture();
       this.installing = false;
       this.starting = false;
       const childPid = Number(child.pid);
@@ -166,7 +229,9 @@ class DevServerManager {
       }
 
       if (!expectedStop && !this.stopping && (code !== 0 || signal)) {
-        this.lastError = `Vite dev server stopped unexpectedly (code=${code}, signal=${signal || "none"})`;
+        const tail = summarizeTail(this.logLines);
+        const suffix = tail ? `\n${tail}` : "";
+        this.lastError = `Vite dev server stopped unexpectedly (code=${code}, signal=${signal || "none"}).${suffix}`;
       }
     });
 
@@ -175,17 +240,19 @@ class DevServerManager {
         timeoutMs: 45000,
       });
 
-      const runtimeUrl = parseRuntimeUrl(ready.url, requested);
+      const runtimeUrl = parseRuntimeUrl(ready.url, launchConfig);
       this.devUrl = runtimeUrl.devUrl;
       this.port = runtimeUrl.port;
       this.starting = false;
       this.lastError = "";
+      this.pushLog(`[REL VITE] Dev server ready at ${this.devUrl}`);
       return this.getStatus();
     } catch (error) {
       this.starting = false;
       this.installing = false;
       const friendly = toUserFriendlyNpmError(error);
       this.lastError = friendly.message;
+      this.pushLog(`[REL VITE][ERROR] ${friendly.message}`);
       if (this.process === child) {
         await killProcessTree(child.pid);
         await waitForProcessExit(child, 6000);
@@ -193,6 +260,10 @@ class DevServerManager {
           this.process = null;
         }
       }
+      if (this.pid === Number(child.pid)) {
+        this.pid = null;
+      }
+      this.detachOutputCapture();
       throw friendly;
     }
   }
@@ -203,12 +274,16 @@ class DevServerManager {
       this.installing = false;
       this.starting = false;
       this.stopping = false;
+      this.pid = null;
+      this.detachOutputCapture();
+      this.pushLog("[REL VITE] Stop requested but no running process was found.");
       return this.getStatus();
     }
 
     this.stopping = true;
     this.installing = false;
     this.starting = false;
+    this.pushLog(`[REL VITE] Stopping dev server (pid=${active.pid || "unknown"})...`);
     const activePid = Number(active.pid);
     if (Number.isFinite(activePid) && activePid > 0) {
       this.expectedStopPids.add(activePid);
@@ -220,6 +295,10 @@ class DevServerManager {
       if (this.process === active && active.exitCode !== null) {
         this.process = null;
       }
+      if (this.pid === Number(active.pid)) {
+        this.pid = null;
+      }
+      this.detachOutputCapture();
       this.stopping = false;
     }
 
@@ -229,6 +308,7 @@ class DevServerManager {
     }
 
     this.lastError = "";
+    this.pushLog("[REL VITE] Dev server stopped.");
     return this.getStatus();
   }
 }
@@ -352,18 +432,22 @@ function normalizeVisitKey(inputPath) {
 async function ensureDependenciesInstalled(projectRoot, manager) {
   const nodeModulesPath = path.join(projectRoot, "node_modules");
   if (await fileExists(nodeModulesPath)) {
+    manager.pushLog("[REL VITE] node_modules found. Skipping npm install.");
     return;
   }
 
   manager.installing = true;
   manager.starting = false;
+  manager.pushLog("[REL VITE] node_modules missing. Running npm install...");
   try {
     const npmInstall = buildNpmSpawnCommand(["install"]);
     await runCommand(npmInstall.command, npmInstall.args, {
       cwd: projectRoot,
       env: process.env,
       timeoutMs: 10 * 60 * 1000,
+      onLine: (line) => manager.pushLog(`[npm install] ${line}`),
     });
+    manager.pushLog("[REL VITE] npm install finished.");
   } catch (error) {
     throw toUserFriendlyNpmError(error);
   } finally {
@@ -374,6 +458,7 @@ async function ensureDependenciesInstalled(projectRoot, manager) {
 function waitForViteReady(child, options) {
   const opts = options && typeof options === "object" ? options : {};
   const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 30000;
+  const onLine = typeof opts.onLine === "function" ? opts.onLine : null;
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -421,6 +506,9 @@ function waitForViteReady(child, options) {
       if (!cleaned) {
         return;
       }
+      if (onLine) {
+        onLine(cleaned);
+      }
       pushTail(outputLines, cleaned, 80);
       const detectedUrl = extractViteUrl(cleaned);
       if (!detectedUrl || settled) {
@@ -464,7 +552,7 @@ function parseRequestedDevUrl(value) {
   const parsed = new URL(normalized);
   const protocol = parsed.protocol || "http:";
   const host = parsed.hostname || "localhost";
-  const port = normalizePort(parsed.port) || 5173;
+  const port = normalizePort(parsed.port) || DEFAULT_VITE_PORT;
   return {
     protocol,
     host,
@@ -585,6 +673,7 @@ function attachLineReader(stream, onLine) {
 async function runCommand(command, args, options) {
   const opts = options && typeof options === "object" ? options : {};
   const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 120000;
+  const onLine = typeof opts.onLine === "function" ? opts.onLine : null;
 
   await new Promise((resolve, reject) => {
     let settled = false;
@@ -599,10 +688,18 @@ async function runCommand(command, args, options) {
     });
 
     const cleanupStdout = attachLineReader(child.stdout, (line) => {
-      pushTail(outputLines, stripAnsi(line), 120);
+      const safeLine = stripAnsi(line);
+      pushTail(outputLines, safeLine, 120);
+      if (onLine && safeLine.trim()) {
+        onLine(safeLine, "stdout");
+      }
     });
     const cleanupStderr = attachLineReader(child.stderr, (line) => {
-      pushTail(outputLines, stripAnsi(line), 120);
+      const safeLine = stripAnsi(line);
+      pushTail(outputLines, safeLine, 120);
+      if (onLine && safeLine.trim()) {
+        onLine(safeLine, "stderr");
+      }
     });
 
     const timeoutId = setTimeout(async () => {
@@ -662,6 +759,18 @@ function toUserFriendlyNpmError(error) {
   if (raw.code === "ENOENT" || looksLikeNpmNotFound(combined)) {
     return new Error("npm not found. Install Node.js (with npm) and make sure npm is available in PATH.");
   }
+  if (looksLikePortInUse(combined)) {
+    return new Error(
+      "Vite could not bind the selected port because it is already in use. "
+      + "REL_EDITOR can switch to the next free port automatically; retry Start Dev Server or choose another Dev URL."
+    );
+  }
+  if (looksLikeMissingPackageJson(combined)) {
+    return new Error("package.json not found in the detected Vite project root.");
+  }
+  if (looksLikeMissingDevScript(combined)) {
+    return new Error('Missing "dev" script in package.json. Add a Vite dev script (for example: "dev": "vite").');
+  }
   return raw;
 }
 
@@ -670,6 +779,24 @@ function looksLikeNpmNotFound(text) {
   return /npm(?:\.cmd)?\s*:\s*command not found/i.test(value)
     || /'npm'\s+is not recognized as an internal or external command/i.test(value)
     || /cannot find.*npm/i.test(value);
+}
+
+function looksLikePortInUse(text) {
+  const value = String(text || "");
+  return /port\s+\d+\s+is already in use/i.test(value)
+    || /eaddrinuse/i.test(value)
+    || /address already in use/i.test(value);
+}
+
+function looksLikeMissingPackageJson(text) {
+  const value = String(text || "");
+  return /enoent.*package\.json/i.test(value)
+    || /could not read package\.json/i.test(value);
+}
+
+function looksLikeMissingDevScript(text) {
+  const value = String(text || "");
+  return /missing script:\s*dev/i.test(value);
 }
 
 function buildNpmSpawnCommand(args) {
@@ -693,6 +820,101 @@ async function fileExists(filePath) {
   } catch {
     return false;
   }
+}
+
+function attachProcessOutput(child, onLine) {
+  const callback = typeof onLine === "function" ? onLine : () => {};
+  const cleanupStdout = attachLineReader(child.stdout, (line) => {
+    callback(line, "stdout");
+  });
+  const cleanupStderr = attachLineReader(child.stderr, (line) => {
+    callback(line, "stderr");
+  });
+  return () => {
+    cleanupStdout();
+    cleanupStderr();
+  };
+}
+
+async function findNextAvailablePort(preferredPort, maxAttempts) {
+  const startPort = normalizePort(preferredPort) || DEFAULT_VITE_PORT;
+  const attempts = Number.isInteger(maxAttempts) && maxAttempts > 0 ? maxAttempts : PORT_SCAN_ATTEMPTS;
+
+  for (let offset = 0; offset < attempts; offset += 1) {
+    const candidate = startPort + offset;
+    if (candidate > 65535) {
+      break;
+    }
+    // Pre-check prevents the common "Port already in use" start failure.
+    // Vite still receives an explicit --port, and may move to another port only if needed.
+    // This keeps startup reliable without requiring terminal interaction.
+    if (await isPortAvailable(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `No free port found near ${startPort}. Checked ${attempts} ports (${startPort}-${Math.min(65535, startPort + attempts - 1)}).`
+  );
+}
+
+function isPortAvailable(port) {
+  const safePort = normalizePort(port);
+  if (!safePort) {
+    return Promise.resolve(false);
+  }
+
+  return probePortAvailability(safePort);
+}
+
+async function probePortAvailability(port) {
+  const probes = [null, "127.0.0.1", "::1"];
+  let hasSupportedProbe = false;
+
+  for (const host of probes) {
+    const result = await tryListenPort(port, host);
+    if (result.supported) {
+      hasSupportedProbe = true;
+    }
+    if (!result.available) {
+      return false;
+    }
+  }
+
+  return hasSupportedProbe;
+}
+
+function tryListenPort(port, host) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+
+    let settled = false;
+    const finish = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+
+    server.once("error", (error) => {
+      const code = String(error && error.code ? error.code : "");
+      if (code === "EAFNOSUPPORT") {
+        finish({ available: true, supported: false });
+        return;
+      }
+      finish({ available: false, supported: true });
+    });
+
+    const listenOptions = host
+      ? { port, host, exclusive: true }
+      : { port, exclusive: true };
+
+    server.listen(listenOptions, () => {
+      server.close(() => finish({ available: true, supported: true }));
+    });
+  });
 }
 
 async function killProcessTree(pid) {

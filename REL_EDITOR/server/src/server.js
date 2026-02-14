@@ -124,11 +124,13 @@ async function main() {
   });
 
   app.get("/api/vite/status", (req, res) => {
+    const status = viteRunner.getStatus();
+    const safeDevUrl = normalizeDevUrl(status.dev_url || currentDevUrl);
     res.json({
       ok: true,
       project_type: currentProjectType,
-      dev_url: currentDevUrl,
-      vite_status: viteRunner.getStatus(),
+      dev_url: safeDevUrl,
+      vite_status: status,
     });
   });
 
@@ -387,7 +389,7 @@ async function main() {
   async function proxyViteRequest(req, res) {
     const status = viteRunner.getStatus();
     if (!status.running || !status.dev_url) {
-      res.status(503).type("html").send(buildViteStoppedHtml(currentDevUrl));
+      res.status(503).type("html").send(buildViteStoppedHtml(currentDevUrl, status));
       return;
     }
 
@@ -563,8 +565,18 @@ async function validateIndexPath(projectRoot, indexPath) {
   return path.relative(projectRoot, absolute).replace(/\\/g, "/");
 }
 
-function buildViteStoppedHtml(devUrl) {
+function buildViteStoppedHtml(devUrl, viteStatus) {
   const safeUrl = normalizeDevUrl(devUrl || DEFAULT_VITE_DEV_URL);
+  const status = viteStatus && typeof viteStatus === "object" ? viteStatus : {};
+  const phase = String(status.phase || "stopped");
+  const lastError = String(status.last_error || "").trim();
+  const logs = Array.isArray(status.log_lines) ? status.log_lines.slice(-8) : [];
+  const detailBlock = lastError
+    ? `<p>Last error: <code>${escapeHtmlText(lastError)}</code></p>`
+    : "<p>No runtime error was reported yet.</p>";
+  const logsBlock = logs.length > 0
+    ? `<pre>${escapeHtmlText(logs.join("\n"))}</pre>`
+    : "<p>No logs captured yet.</p>";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -576,13 +588,17 @@ function buildViteStoppedHtml(devUrl) {
     h1 { margin: 0 0 10px; font-size: 20px; }
     p { margin: 0 0 8px; line-height: 1.45; }
     code { background: #f4efe7; border-radius: 4px; padding: 2px 6px; }
+    pre { margin: 8px 0 0; padding: 8px; max-height: 240px; overflow: auto; background: #f7f1e7; border: 1px solid #dbcdb9; border-radius: 6px; white-space: pre-wrap; font-size: 12px; }
   </style>
 </head>
 <body>
   <div class="box">
     <h1>Vite Dev Server Is Not Running</h1>
     <p>Start the server from REL_EDITOR using <strong>Start Dev Server</strong>.</p>
+    <p>Status: <code>${escapeHtmlText(phase)}</code></p>
     <p>Configured Dev URL: <code>${escapeHtmlText(safeUrl)}</code></p>
+    ${detailBlock}
+    ${logsBlock}
   </div>
 </body>
 </html>`;

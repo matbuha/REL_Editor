@@ -190,6 +190,13 @@
       running: false,
       port: null,
       installing: false,
+      starting: false,
+      phase: "stopped",
+      pid: null,
+      preferredPort: null,
+      portAutoSelected: false,
+      lastError: "",
+      logLines: [],
       projectRoot: "",
       devUrl: DEFAULT_VITE_DEV_URL,
     },
@@ -228,6 +235,7 @@
     lastSelection: null,
     lastTreeSnapshot: [],
     overlayReady: false,
+    viteStatusPollTimer: null,
     layout: {
       leftPx: null,
       rightPx: null,
@@ -288,6 +296,7 @@
     startDevServerBtn: document.getElementById("startDevServerBtn"),
     stopDevServerBtn: document.getElementById("stopDevServerBtn"),
     viteStatusText: document.getElementById("viteStatusText"),
+    viteLogText: document.getElementById("viteLogText"),
     loadProjectBtn: document.getElementById("loadProjectBtn"),
     savePatchBtn: document.getElementById("savePatchBtn"),
     exportSafeBtn: document.getElementById("exportSafeBtn"),
@@ -378,11 +387,18 @@
     syncThemeUiFromState();
     buildAddPanel();
     loadIframe();
+    syncViteStatusPolling();
   }
 
   function bindEvents() {
     window.addEventListener("message", onMessageFromOverlay);
     window.addEventListener("keydown", onEditorKeyDown, true);
+    window.addEventListener("beforeunload", () => {
+      if (state.viteStatusPollTimer) {
+        clearInterval(state.viteStatusPollTimer);
+        state.viteStatusPollTimer = null;
+      }
+    });
 
     dom.projectTypeSelect.addEventListener("change", () => {
       const nextType = normalizeProjectType(dom.projectTypeSelect.value);
@@ -2288,6 +2304,7 @@
     dom.indexPathInput.disabled = isVite;
     dom.devUrlInput.disabled = !isVite;
     renderViteStatus();
+    syncViteStatusPolling();
     if (!isVite) {
       clearExportReport();
     }
@@ -2321,10 +2338,26 @@
     const raw = value && typeof value === "object" ? value : {};
     const devUrl = normalizeDevUrl(raw.dev_url || raw.devUrl || fallbackUrl || DEFAULT_VITE_DEV_URL);
     const parsedPort = Number(raw.port);
+    const preferredPort = Number(raw.preferred_port || raw.preferredPort);
+    const pid = Number(raw.pid);
+    const logLines = Array.isArray(raw.log_lines)
+      ? raw.log_lines.map((line) => String(line || "").trim()).filter(Boolean)
+      : (Array.isArray(raw.logLines) ? raw.logLines.map((line) => String(line || "").trim()).filter(Boolean) : []);
     return {
       running: Boolean(raw.running),
       installing: Boolean(raw.installing),
+      starting: Boolean(raw.starting),
+      phase: String(raw.phase || "").trim().toLowerCase() || "stopped",
       port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : null,
+      preferredPort: Number.isFinite(preferredPort) && preferredPort > 0 ? preferredPort : null,
+      portAutoSelected: Boolean(
+        Object.prototype.hasOwnProperty.call(raw, "port_auto_selected")
+          ? raw.port_auto_selected
+          : raw.portAutoSelected
+      ),
+      pid: Number.isFinite(pid) && pid > 0 ? pid : null,
+      lastError: String(raw.last_error || raw.lastError || "").trim(),
+      logLines,
       projectRoot: String(raw.project_root || raw.projectRoot || state.projectRoot || "").trim(),
       devUrl,
     };
@@ -2337,25 +2370,111 @@
     const isVite = state.projectType === PROJECT_TYPE_VITE_REACT_STYLE;
     const status = normalizeViteStatus(state.viteStatus, state.devUrl);
     state.viteStatus = status;
+    dom.viteStatusText.classList.remove("running", "error");
 
     if (!isVite) {
       dom.viteStatusText.textContent = "Vite: not active";
       dom.startDevServerBtn.disabled = true;
       dom.stopDevServerBtn.disabled = true;
+      renderViteLog([]);
       return;
     }
 
-    if (status.installing) {
+    if (status.installing || status.phase === "installing") {
       dom.viteStatusText.textContent = "Vite: installing dependencies...";
+    } else if (status.starting || status.phase === "starting") {
+      dom.viteStatusText.textContent = "Vite: starting...";
     } else if (status.running) {
       const portText = status.port ? ` on port ${status.port}` : "";
-      dom.viteStatusText.textContent = `Vite: running${portText}`;
+      const autoPortText = status.portAutoSelected ? " (auto port)" : "";
+      const pidText = status.pid ? ` pid ${status.pid}` : "";
+      dom.viteStatusText.textContent = `Vite: running${portText}${autoPortText}${pidText}`;
+      dom.viteStatusText.classList.add("running");
+    } else if (status.lastError) {
+      dom.viteStatusText.textContent = "Vite: error";
+      dom.viteStatusText.classList.add("error");
     } else {
       dom.viteStatusText.textContent = "Vite: stopped";
     }
 
-    dom.startDevServerBtn.disabled = status.running || status.installing;
-    dom.stopDevServerBtn.disabled = !status.running && !status.installing;
+    dom.startDevServerBtn.disabled = status.running || status.installing || status.starting;
+    dom.stopDevServerBtn.disabled = !status.running && !status.installing && !status.starting;
+    renderViteLog(status.logLines, status.lastError);
+  }
+
+  function renderViteLog(lines, lastError) {
+    if (!dom.viteLogText) {
+      return;
+    }
+    const isVite = state.projectType === PROJECT_TYPE_VITE_REACT_STYLE;
+    if (!isVite) {
+      dom.viteLogText.classList.add("hidden");
+      dom.viteLogText.textContent = "";
+      return;
+    }
+
+    const safeLines = Array.isArray(lines)
+      ? lines.map((line) => String(line || "").trim()).filter(Boolean)
+      : [];
+
+    if (safeLines.length === 0) {
+      const fallbackError = String(lastError || "").trim();
+      dom.viteLogText.textContent = fallbackError || "No Vite logs yet.";
+      dom.viteLogText.classList.remove("hidden");
+      return;
+    }
+
+    dom.viteLogText.textContent = safeLines.slice(-16).join("\n");
+    dom.viteLogText.classList.remove("hidden");
+  }
+
+  function syncViteStatusPolling() {
+    const shouldPoll = state.projectType === PROJECT_TYPE_VITE_REACT_STYLE;
+    if (shouldPoll && !state.viteStatusPollTimer) {
+      state.viteStatusPollTimer = window.setInterval(() => {
+        refreshViteStatus().catch(() => {});
+      }, 1500);
+      refreshViteStatus().catch(() => {});
+      return;
+    }
+    if (!shouldPoll && state.viteStatusPollTimer) {
+      clearInterval(state.viteStatusPollTimer);
+      state.viteStatusPollTimer = null;
+    }
+  }
+
+  async function refreshViteStatus() {
+    if (state.projectType !== PROJECT_TYPE_VITE_REACT_STYLE) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/vite/status");
+      if (!response.ok) {
+        return;
+      }
+      const data = await response.json();
+      const nextStatus = normalizeViteStatus(data.vite_status || {}, state.devUrl);
+      const prevRunning = Boolean(state.viteStatus && state.viteStatus.running);
+      const nextRunning = Boolean(nextStatus.running);
+      state.viteStatus = nextStatus;
+
+      const incomingDevUrl = normalizeDevUrl(data.dev_url || nextStatus.devUrl || state.devUrl);
+      const devUrlChanged = incomingDevUrl !== state.devUrl;
+      if (devUrlChanged) {
+        state.devUrl = incomingDevUrl;
+        dom.devUrlInput.value = state.devUrl;
+      }
+
+      renderViteStatus();
+      if (nextRunning && !prevRunning) {
+        setStatus(`Vite dev server running: ${state.devUrl}`);
+      }
+      if (!nextRunning && prevRunning) {
+        setStatus(nextStatus.lastError || "Vite dev server stopped", Boolean(nextStatus.lastError));
+      }
+    } catch {
+      // Polling errors should not block the editor UI.
+    }
   }
 
   async function startViteDevServer() {
@@ -2367,6 +2486,9 @@
     state.viteStatus = {
       ...state.viteStatus,
       installing: true,
+      starting: true,
+      phase: "starting",
+      lastError: "",
     };
     renderViteStatus();
     setStatus("Starting Vite dev server...");
@@ -2398,10 +2520,14 @@
       syncProjectTypeUi();
       loadIframe();
       setStatus(`Vite dev server running: ${state.devUrl}`);
+      refreshViteStatus().catch(() => {});
     } catch (error) {
       state.viteStatus = {
         ...state.viteStatus,
         installing: false,
+        starting: false,
+        phase: "failed",
+        lastError: String(error && error.message ? error.message : "Unknown error"),
       };
       renderViteStatus();
       setStatus(`Failed to start Vite dev server: ${error.message}`, true);
@@ -2437,6 +2563,7 @@
         loadIframe();
       }
       setStatus("Vite dev server stopped");
+      refreshViteStatus().catch(() => {});
     } catch (error) {
       setStatus(`Failed to stop Vite dev server: ${error.message}`, true);
     }
