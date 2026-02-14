@@ -138,7 +138,7 @@
   );
 
   const basicComponents = [
-    { type: "section", name: "Section", description: "Structural section block", props: { text: "New section" } },
+    { type: "section", name: "Section", description: "Structural section block", props: {} },
     { type: "container", name: "Container", description: "Generic div container", props: { text: "Container" } },
     { type: "heading-h1", name: "Heading H1", description: "Large title", props: { text: "Heading H1" } },
     { type: "heading-h2", name: "Heading H2", description: "Section title", props: { text: "Heading H2" } },
@@ -173,6 +173,8 @@
   const PROJECT_TYPE_STATIC = "static-html";
   const PROJECT_TYPE_VITE_REACT_STYLE = "vite-react-style";
   const DEFAULT_VITE_DEV_URL = "http://localhost:5173";
+  const CARD_CENTER_TRIGGER_PROPS = new Set(["justify-content", "align-items"]);
+  const VITE_GLOBAL_TARGET_PROPS = ["background", "background-color", "background-image", "color"];
   const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
   const LEFT_MIN_PX = 200;
   const RIGHT_MIN_PX = 260;
@@ -2267,6 +2269,7 @@
   function loadIframe() {
     state.overlayReady = false;
     if (state.projectType === PROJECT_TYPE_VITE_REACT_STYLE) {
+      logVite(`Loading iframe from /vite-proxy/ (dev_url=${state.devUrl})`);
       setStatus("Loading Vite preview...");
       dom.iframe.src = "/vite-proxy/";
       return;
@@ -2530,7 +2533,11 @@
       theme: state.theme,
     };
 
-    const overrideCss = buildOverrideCss(state.overridesMeta, state.theme);
+    const overrideCss = buildOverrideCss(state.overridesMeta, state.theme, {
+      projectType: state.projectType,
+      selectorMap: state.selectorMap,
+      elementsMap: state.elementsMap,
+    });
     const response = await fetch("/api/patch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2721,6 +2728,7 @@
       state.overlayReady = true;
       applyPatchToOverlay();
       requestTreeSnapshot();
+      logVite("Overlay reported ready");
       setStatus("Overlay ready");
       return;
     }
@@ -2788,6 +2796,11 @@
       return;
     }
 
+    if (msg.type === "REL_CENTER_APPLIED") {
+      handleCenterApplied(msg.payload);
+      return;
+    }
+
     if (msg.type === "REL_RESIZE_SYNC") {
       handleResizeSyncMessage(msg.payload || {});
       return;
@@ -2815,6 +2828,21 @@
       state.selectorMap[payload.relId] = stableSelector;
     } else if (fallbackSelector && !state.selectorMap[payload.relId]) {
       state.selectorMap[payload.relId] = fallbackSelector;
+    }
+    const parentRelId = String(payload.parentRelId || "").trim();
+    const parentFallbackSelector = String(payload.parentFallbackSelector || "").trim();
+    const parentStableSelector = String(payload.parentStableSelector || "").trim();
+    if (parentRelId) {
+      if (parentFallbackSelector) {
+        state.elementsMap[parentRelId] = parentFallbackSelector;
+      } else if (!state.elementsMap[parentRelId]) {
+        state.elementsMap[parentRelId] = "";
+      }
+      if (parentStableSelector) {
+        state.selectorMap[parentRelId] = parentStableSelector;
+      } else if (parentFallbackSelector && !state.selectorMap[parentRelId]) {
+        state.selectorMap[parentRelId] = parentFallbackSelector;
+      }
     }
 
     const overrides = state.overridesMeta[payload.relId] || {};
@@ -3070,27 +3098,44 @@
       return;
     }
 
-    const relId = state.selectedRelId;
+    const relId = String(state.selectedRelId || "").trim();
+    const safeProperty = String(property || "").trim().toLowerCase();
     const normalizedValue = normalizeRgbaAlphaInCssValue(String(value ?? ""));
     const trimmedValue = normalizedValue.trim();
-    if (!state.overridesMeta[relId]) {
-      state.overridesMeta[relId] = {};
+
+    applyStyleForRelId(relId, safeProperty, normalizedValue);
+    if (shouldTriggerCardCenterHelper(safeProperty, trimmedValue)) {
+      requestCardCenterInParent(relId);
+    }
+  }
+
+  function applyStyleForRelId(relId, property, value) {
+    const safeRelId = String(relId || "").trim();
+    const safeProperty = String(property || "").trim().toLowerCase();
+    if (!safeRelId || !safeProperty) {
+      return;
+    }
+
+    const normalizedValue = normalizeRgbaAlphaInCssValue(String(value ?? ""));
+    const trimmedValue = normalizedValue.trim();
+    if (!state.overridesMeta[safeRelId]) {
+      state.overridesMeta[safeRelId] = {};
     }
 
     if (trimmedValue === "") {
-      delete state.overridesMeta[relId][property];
+      delete state.overridesMeta[safeRelId][safeProperty];
     } else {
-      state.overridesMeta[relId][property] = normalizedValue;
+      state.overridesMeta[safeRelId][safeProperty] = normalizedValue;
     }
-    const borderBoxPayload = ensureBorderBoxOverrideForSizing(relId, property, trimmedValue);
+    const borderBoxPayload = ensureBorderBoxOverrideForSizing(safeRelId, safeProperty, trimmedValue);
 
-    if (Object.keys(state.overridesMeta[relId]).length === 0) {
-      delete state.overridesMeta[relId];
+    if (Object.keys(state.overridesMeta[safeRelId]).length === 0) {
+      delete state.overridesMeta[safeRelId];
     }
 
     sendToOverlay({
       type: "REL_APPLY_STYLE",
-      payload: { relId, property, value: trimmedValue ? normalizedValue : "" },
+      payload: { relId: safeRelId, property: safeProperty, value: trimmedValue ? normalizedValue : "" },
     });
     if (borderBoxPayload) {
       sendToOverlay({
@@ -3099,14 +3144,51 @@
       });
     }
 
-    if (state.lastSelection) {
+    if (state.lastSelection && state.selectedRelId === safeRelId) {
       updateSelectionInfo(
         state.lastSelection,
-        state.overridesMeta[relId] || {},
-        state.attributesMeta[relId] || {},
-        state.linksMeta[relId] || {}
+        state.overridesMeta[safeRelId] || {},
+        state.attributesMeta[safeRelId] || {},
+        state.linksMeta[safeRelId] || {}
       );
     }
+  }
+
+  function shouldTriggerCardCenterHelper(property, value) {
+    if (state.projectType !== PROJECT_TYPE_VITE_REACT_STYLE) {
+      return false;
+    }
+    if (!state.lastSelection || !state.selectedRelId) {
+      return false;
+    }
+    if (!CARD_CENTER_TRIGGER_PROPS.has(String(property || "").toLowerCase())) {
+      return false;
+    }
+    if (String(value || "").trim().toLowerCase() !== "center") {
+      return false;
+    }
+    return isCardSelection(state.lastSelection);
+  }
+
+  function requestCardCenterInParent(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return;
+    }
+    logVite(`Center helper requested for relId=${safeRelId}`);
+    sendToOverlay({
+      type: "REL_CENTER_IN_PARENT",
+      payload: { relId: safeRelId },
+    });
+  }
+
+  function isCardSelection(selection) {
+    const safeSelection = selection && typeof selection === "object" ? selection : {};
+    const className = String(safeSelection.className || "").toLowerCase();
+    if (className.includes("rel-added-card") || /\bcard\b/.test(className)) {
+      return true;
+    }
+    return false;
   }
 
   function ensureBorderBoxOverrideForSizing(relId, property, value) {
@@ -3312,6 +3394,36 @@
     clearSelectionUi();
     requestTreeSnapshot();
     setStatus("Element deleted");
+  }
+
+  function handleCenterApplied(payload) {
+    const safePayload = payload && typeof payload === "object" ? payload : {};
+    const containerRelId = String(safePayload.containerRelId || "").trim();
+    if (!containerRelId) {
+      return;
+    }
+
+    const fallbackSelector = String(safePayload.fallbackSelector || "").trim();
+    const stableSelector = String(safePayload.stableSelector || "").trim();
+    if (fallbackSelector) {
+      state.elementsMap[containerRelId] = fallbackSelector;
+    }
+    if (stableSelector) {
+      state.selectorMap[containerRelId] = stableSelector;
+    } else if (fallbackSelector && !state.selectorMap[containerRelId]) {
+      state.selectorMap[containerRelId] = fallbackSelector;
+    }
+
+    const appliedProps = safePayload.appliedProps && typeof safePayload.appliedProps === "object"
+      ? safePayload.appliedProps
+      : {};
+    for (const [property, rawValue] of Object.entries(appliedProps)) {
+      const value = String(rawValue || "").trim();
+      applyStyleForRelId(containerRelId, property, value);
+    }
+
+    logVite(`Center helper applied on relId=${containerRelId}`);
+    setStatus("Card centered in parent container");
   }
 
   function requestTreeSnapshot() {
@@ -3582,7 +3694,8 @@
     return "Font family";
   }
 
-  function buildOverrideCss(overridesMeta, themeState) {
+  function buildOverrideCss(overridesMeta, themeState, options) {
+    const opts = options && typeof options === "object" ? options : {};
     const lines = [];
     const themeCss = String(buildThemeCss(themeState || createDefaultThemeState()) || "").trim();
     if (themeCss) {
@@ -3608,7 +3721,77 @@
       lines.push("");
     }
 
+    const viteGlobalLines = buildViteGlobalOverrideBlock(overridesMeta, opts);
+    if (viteGlobalLines.length > 0) {
+      lines.push(...viteGlobalLines);
+      lines.push("");
+    }
+
     return lines.join("\n");
+  }
+
+  function buildViteGlobalOverrideBlock(overridesMeta, options) {
+    if (normalizeProjectType(options.projectType) !== PROJECT_TYPE_VITE_REACT_STYLE) {
+      return [];
+    }
+
+    const selectorMap = ensurePlainObject(options.selectorMap);
+    const elementsMap = ensurePlainObject(options.elementsMap);
+    const relIds = Object.keys(overridesMeta || {}).sort();
+    const bodyOverrides = {};
+
+    for (const relId of relIds) {
+      const selector = String(selectorMap[relId] || elementsMap[relId] || "").trim();
+      if (!isBodySelector(selector)) {
+        continue;
+      }
+      const props = ensurePlainObject(overridesMeta[relId]);
+      for (const key of VITE_GLOBAL_TARGET_PROPS) {
+        const value = String(props[key] ?? "").trim();
+        if (!value) {
+          continue;
+        }
+        bodyOverrides[key] = normalizeRgbaAlphaInCssValue(value);
+      }
+    }
+
+    const declarations = VITE_GLOBAL_TARGET_PROPS
+      .map((key) => [key, String(bodyOverrides[key] || "").trim()])
+      .filter(([, value]) => value);
+
+    if (declarations.length === 0) {
+      return [];
+    }
+
+    const lines = [
+      "/* [REL VITE] Global background/color override for Vite root containers */",
+      "html,",
+      "body,",
+      "#root,",
+      "#root > * {",
+    ];
+    for (const [property, value] of declarations) {
+      lines.push(`  ${property}: ${value} !important;`);
+    }
+    lines.push("}");
+    return lines;
+  }
+
+  function isBodySelector(selector) {
+    const normalized = String(selector || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+    if (!normalized) {
+      return false;
+    }
+    if (normalized === "body" || normalized === "html body") {
+      return true;
+    }
+    if (normalized.startsWith("body:") || normalized.startsWith("html body:")) {
+      return true;
+    }
+    return false;
   }
 
   function upsertAttributeMeta(relId, field, value) {
@@ -4399,6 +4582,13 @@
 
   function generateId(prefix) {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function logVite(message) {
+    if (state.projectType !== PROJECT_TYPE_VITE_REACT_STYLE) {
+      return;
+    }
+    console.log(`[REL VITE] ${String(message || "").trim()}`);
   }
 
   function setStatus(message, isError) {

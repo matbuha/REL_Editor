@@ -1,0 +1,103 @@
+{
+  "version": 4,
+  "project_root": "C:\\Users\\ariel\\Projects\\REL_Editor\\demo-vite-react",
+  "project_type": "vite-react-style",
+  "index_path": "index.html",
+  "dev_url": "http://localhost:5191",
+  "elementsMap": {
+    "rel-mlm4x724-1": "body",
+    "rel-mlm4x74a-3": "html",
+    "rel-added-section-test": "section",
+    "rel-added-card-test": ".rel-added-card",
+    "rel-mlm4x8e4-31": "div:nth-of-type(5)"
+  },
+  "selectorMap": {
+    "rel-mlm4x724-1": "body",
+    "rel-mlm4x74a-3": "html",
+    "rel-added-section-test": "section",
+    "rel-added-card-test": ".rel-added-card",
+    "rel-mlm4x8e4-31": "div:nth-of-type(5)"
+  },
+  "attributeOverrides": {},
+  "textOverrides": {},
+  "overridesMeta": {
+    "rel-mlm4x724-1": {
+      "background": "#0c2238",
+      "background-image": "none"
+    },
+    "rel-added-card-test": {
+      "justify-content": "center"
+    },
+    "rel-mlm4x8e4-31": {
+      "display": "flex",
+      "justify-content": "center",
+      "align-items": "center"
+    }
+  },
+  "attributesMeta": {},
+  "linksMeta": {},
+  "addedNodes": [
+    {
+      "nodeId": "s-1771062563426",
+      "relId": "rel-added-section-test",
+      "parentRelId": "rel-mlm4x724-1",
+      "type": "section",
+      "position": "append",
+      "props": {},
+      "fallbackSelector": "section",
+      "stableSelector": "section"
+    },
+    {
+      "nodeId": "c-1771062563471",
+      "relId": "rel-added-card-test",
+      "parentRelId": "rel-mlm4x724-1",
+      "type": "card",
+      "position": "append",
+      "props": {},
+      "fallbackSelector": ".rel-added-card",
+      "stableSelector": ".rel-added-card"
+    }
+  ],
+  "deletedNodes": [],
+  "runtimeLibraries": {
+    "designLibrary": "none",
+    "iconSet": "none",
+    "animateCss": false,
+    "bootstrapJs": false
+  },
+  "runtimeFonts": {
+    "provider": "none",
+    "families": []
+  },
+  "theme": {
+    "applied": false,
+    "activeThemeId": "theme-default",
+    "themes": [
+      {
+        "id": "theme-default",
+        "name": "Default Theme",
+        "colors": {
+          "primary": "#2b6df8",
+          "secondary": "#17b57a",
+          "accent": "#f97316",
+          "background": "#f6f7fb",
+          "surface": "#ffffff",
+          "text": "#1f2937",
+          "muted": "#6b7280",
+          "border": "#d1d5db"
+        },
+        "customColors": {},
+        "fonts": {
+          "bodyFamily": "\"Segoe UI\", system-ui, sans-serif",
+          "headingFamily": "\"Segoe UI\", system-ui, sans-serif",
+          "bodySize": "16px",
+          "h1Size": "2.5rem",
+          "h2Size": "2rem",
+          "h3Size": "1.5rem",
+          "smallSize": "0.875rem",
+          "lineHeight": "1.5"
+        }
+      }
+    ]
+  }
+}

@@ -105,3 +105,4 @@ When saving, files are created under the selected project root:
 - This is a local-only tool.
 - Runtime `data-rel-id` values are assigned in the live DOM only.
 - Source HTML/CSS are not modified during editing.
+- In `Vite React (Style only)` mode, global background/color edits on `body` are applied to `html, body, #root, #root > *` to override Vite template defaults reliably.

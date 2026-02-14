@@ -1,0 +1,10 @@
+#root h1 {
+  font-family: "system-ui", sans-serif;
+  text-shadow: 5px 5px 30px rgba(255, 200, 255, 0.28);
+}
+
+#root div a:nth-of-type(1) img.logo {
+  width: 224px;
+  height: 216px;
+  box-sizing: border-box;
+}

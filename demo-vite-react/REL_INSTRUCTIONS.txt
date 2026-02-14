@@ -1,0 +1,11 @@
+REL_EDITOR Vite React (Style only) export
+
+Generated CSS: src/REL_overrides.css
+Generated entry: src/REL_entry.jsx
+
+To run with the REL entry without editing source files permanently:
+1. Temporarily point your Vite entry import to src/REL_entry.* in your local run flow,
+   or create a local script that uses REL_entry as the startup module.
+2. Keep your original entry file unchanged: src/main.jsx
+
+No package.json changes were made automatically.

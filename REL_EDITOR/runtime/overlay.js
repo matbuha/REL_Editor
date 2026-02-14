@@ -46,7 +46,9 @@
   const MANAGED_DROP_CLASS = "rel-editor-drop-target";
   const RESIZER_SELECTION_EVENT = "rel-selection-change";
   const PROTECTED_TAGS = new Set(["HTML", "HEAD", "BODY"]);
-  const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV"]);
+  const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV", "SECTION"]);
+  const IS_VITE_PROXY_MODE = String(window.location.pathname || "").startsWith("/vite-proxy");
+  const VITE_GLOBAL_STYLE_PROPS = ["background", "background-color", "background-image", "color"];
 
   const LIBRARY_ASSETS = {
     bootstrap: {
@@ -95,6 +97,10 @@
       families: [],
     },
     themeCss: "",
+    viteHeadObserver: null,
+    viteHeadEnsureRafId: 0,
+    viteBodyGlobalStyleValues: {},
+    viteBodyGlobalStyleTouched: false,
   };
 
   ensureResizerModuleLoaded();
@@ -106,6 +112,10 @@
   window.addEventListener("message", onMessageFromEditor);
 
   blockTopNavigation();
+  if (IS_VITE_PROXY_MODE) {
+    logVite(`Overlay active on ${window.location.pathname}`);
+    setupViteHeadObserver();
+  }
   postToEditor({ type: "REL_OVERLAY_READY" });
 
   function onDocumentClick(event) {
@@ -261,6 +271,12 @@
       return;
     }
 
+    if (message.type === "REL_CENTER_IN_PARENT") {
+      const payload = message.payload || {};
+      centerElementInParent(payload.relId);
+      return;
+    }
+
     if (message.type === "REL_SET_LIBRARIES") {
       const payload = message.payload || {};
       applyRuntimeLibraries(payload.runtimeLibraries || {});
@@ -328,6 +344,8 @@
   function applyPatch(payload) {
     state.elementsMap = payload.elementsMap || {};
     state.appliedAddedNodeIds.clear();
+    state.viteBodyGlobalStyleValues = {};
+    state.viteBodyGlobalStyleTouched = false;
     applyRuntimeLibraries(payload.runtimeLibraries || state.runtimeLibraries);
     applyRuntimeFonts(payload.runtimeFonts || state.runtimeFonts);
     applyThemeCss(payload.themeCss || "");
@@ -363,6 +381,10 @@
         fallbackSelector: node && node.fallbackSelector,
         silent: true,
       });
+    }
+
+    if (IS_VITE_PROXY_MODE) {
+      updateViteBodyGlobalOverrideFromBody(document.body);
     }
 
     if (state.selectedElement) {
@@ -475,15 +497,25 @@
       return;
     }
 
+    const safeProperty = String(property || "").trim().toLowerCase();
     const element = findElementByRelIdOrFallback(relId, state.elementsMap);
     if (!element) {
       return;
     }
 
     if (value === "") {
-      element.style.removeProperty(property);
+      element.style.removeProperty(safeProperty);
     } else {
-      element.style.setProperty(property, value);
+      element.style.setProperty(safeProperty, value);
+    }
+
+    if (IS_VITE_PROXY_MODE && element.tagName === "BODY" && VITE_GLOBAL_STYLE_PROPS.includes(safeProperty)) {
+      trackViteBodyGlobalStyleValue(safeProperty, value);
+      updateViteBodyGlobalOverrideFromBody(element);
+    }
+
+    if (IS_VITE_PROXY_MODE) {
+      scheduleViteHeadOrderEnsure();
     }
 
     if (state.selectedElement === element) {
@@ -761,6 +793,7 @@
     const finalRelId = ensureRelId(element, node.relId);
     const finalNodeId = node.nodeId || generateNodeId();
     element.dataset.relAddedNodeId = finalNodeId;
+    element.dataset.relManaged = "1";
     parent.appendChild(element);
     state.appliedAddedNodeIds.add(finalNodeId);
 
@@ -834,7 +867,7 @@
   function createNodeElement(type, props) {
     switch (type) {
       case "section":
-        return createTextNodeElement("section", props.text || "New section");
+        return createSectionElement(props);
       case "container":
         return createTextNodeElement("div", props.text || "Container");
       case "heading-h1":
@@ -919,6 +952,14 @@
     const el = document.createElement(tagName);
     el.textContent = text;
     return el;
+  }
+
+  function createSectionElement(props) {
+    const section = document.createElement("section");
+    if (props && Object.prototype.hasOwnProperty.call(props, "text")) {
+      section.textContent = String(props.text || "");
+    }
+    return section;
   }
 
   function createBasicCard() {
@@ -1026,6 +1067,9 @@
     const linkContext = getLinkContext(element, relId);
     const stableSelector = buildStableSelector(element);
     const textInfo = getTextEditInfo(element);
+    const parent = element.parentElement;
+    const parentRelId = parent ? ensureRelId(parent) : "";
+    const parentStableSelector = parent ? buildStableSelector(parent) : "";
 
     const computedSubset = {};
     for (const key of TRACKED_STYLES) {
@@ -1040,6 +1084,9 @@
       relId,
       fallbackSelector: stableSelector,
       stableSelector,
+      parentRelId,
+      parentFallbackSelector: parentStableSelector,
+      parentStableSelector,
       tagName: element.tagName.toLowerCase(),
       id: element.id || "",
       className,
@@ -1505,6 +1552,103 @@
     return target.isContentEditable;
   }
 
+  function centerElementInParent(relId) {
+    const safeRelId = String(relId || "").trim();
+    if (!safeRelId) {
+      return false;
+    }
+
+    const element = findElementByRelIdOrFallback(safeRelId, state.elementsMap);
+    if (!element) {
+      return false;
+    }
+
+    let container = resolveCenterContainer(element);
+    if (!container) {
+      container = ensureCenterWrapper(element, safeRelId);
+    }
+    if (!container) {
+      return false;
+    }
+
+    const containerRelId = ensureRelId(container);
+    container.style.setProperty("display", "flex");
+    container.style.setProperty("justify-content", "center");
+    container.style.setProperty("align-items", "center");
+    if (container.dataset.relWrapper === "center") {
+      container.style.setProperty("width", "100%");
+    }
+
+    const stableSelector = buildStableSelector(container);
+    postToEditor({
+      type: "REL_CENTER_APPLIED",
+      payload: {
+        relId: safeRelId,
+        containerRelId,
+        fallbackSelector: stableSelector,
+        stableSelector,
+        appliedProps: {
+          display: "flex",
+          "justify-content": "center",
+          "align-items": "center",
+        },
+      },
+    });
+    postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    logVite(`Center helper applied via container ${containerRelId}`);
+    return true;
+  }
+
+  function resolveCenterContainer(element) {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+
+    let current = element.parentElement;
+    while (current) {
+      const isProtectedContainer = PROTECTED_TAGS.has(current.tagName);
+      if (
+        !isProtectedContainer
+        &&
+        canContainChildren(current)
+        && (current.dataset.relManaged === "1" || Boolean(current.dataset.relId))
+      ) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+
+    const directParent = element.parentElement;
+    if (directParent && !PROTECTED_TAGS.has(directParent.tagName) && canContainChildren(directParent)) {
+      return directParent;
+    }
+
+    return null;
+  }
+
+  function ensureCenterWrapper(element, relId) {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+
+    const parent = element.parentElement;
+    if (!parent || !element.parentNode) {
+      return null;
+    }
+
+    if (parent.dataset.relWrapper === "center" && parent.dataset.relWrapperFor === relId) {
+      return parent;
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.dataset.relWrapper = "center";
+    wrapper.dataset.relWrapperFor = relId;
+    wrapper.dataset.relManaged = "1";
+    element.parentNode.insertBefore(wrapper, element);
+    wrapper.appendChild(element);
+    return wrapper;
+  }
+
   function setActiveDropTarget(target) {
     if (state.activeDropTarget === target) {
       return;
@@ -1542,6 +1686,117 @@
     );
   }
 
+  function setupViteHeadObserver() {
+    if (!IS_VITE_PROXY_MODE || !document.head || state.viteHeadObserver) {
+      return;
+    }
+
+    state.viteHeadObserver = new MutationObserver(() => {
+      scheduleViteHeadOrderEnsure();
+    });
+    state.viteHeadObserver.observe(document.head, { childList: true });
+    ensureViteHeadOrderNow();
+    logVite("Head cascade watcher enabled");
+  }
+
+  function scheduleViteHeadOrderEnsure() {
+    if (!IS_VITE_PROXY_MODE || !document.head) {
+      return;
+    }
+    if (state.viteHeadEnsureRafId) {
+      return;
+    }
+
+    state.viteHeadEnsureRafId = window.requestAnimationFrame(() => {
+      state.viteHeadEnsureRafId = 0;
+      ensureViteHeadOrderNow();
+    });
+  }
+
+  function ensureViteHeadOrderNow() {
+    if (!IS_VITE_PROXY_MODE || !document.head) {
+      return;
+    }
+
+    const orderedSelectors = [
+      'link[data-rel-runtime="overlay-css"]',
+      'link[data-rel-runtime="override-css"]',
+      'style[data-rel-theme-managed="1"]',
+      'style[data-rel-vite-global-body="1"]',
+    ];
+
+    for (const selector of orderedSelectors) {
+      const nodes = document.querySelectorAll(selector);
+      for (const node of nodes) {
+        if (node.parentElement === document.head) {
+          document.head.appendChild(node);
+        }
+      }
+    }
+  }
+
+  function updateViteBodyGlobalOverrideFromBody(bodyElement) {
+    if (!IS_VITE_PROXY_MODE || !document.head) {
+      return;
+    }
+
+    const body = bodyElement instanceof HTMLBodyElement ? bodyElement : document.body;
+    if (!body) {
+      return;
+    }
+
+    const declarations = [];
+    const trackedValues = state.viteBodyGlobalStyleValues || {};
+    for (const key of VITE_GLOBAL_STYLE_PROPS) {
+      const trackedValue = String(trackedValues[key] || "").trim();
+      const fallbackValue = String(body.style.getPropertyValue(key) || "").trim();
+      const value = state.viteBodyGlobalStyleTouched ? trackedValue : (trackedValue || fallbackValue);
+      if (!value) {
+        continue;
+      }
+      declarations.push([key, value]);
+    }
+
+    const selector = 'style[data-rel-vite-global-body="1"]';
+    const existing = document.querySelector(selector);
+    if (declarations.length === 0) {
+      if (existing) {
+        existing.remove();
+        logVite("Removed global body override block");
+      }
+      scheduleViteHeadOrderEnsure();
+      return;
+    }
+
+    const cssLines = [
+      "html, body, #root, #root > * {",
+      ...declarations.map(([property, value]) => `  ${property}: ${value} !important;`),
+      "}",
+    ];
+    const styleNode = existing || document.createElement("style");
+    styleNode.dataset.relViteGlobalBody = "1";
+    styleNode.textContent = cssLines.join("\n");
+    if (!existing) {
+      document.head.appendChild(styleNode);
+    }
+    logVite(`Updated global body override (${declarations.map(([key]) => key).join(", ")})`);
+    scheduleViteHeadOrderEnsure();
+  }
+
+  function trackViteBodyGlobalStyleValue(property, value) {
+    if (!IS_VITE_PROXY_MODE || !VITE_GLOBAL_STYLE_PROPS.includes(property)) {
+      return;
+    }
+
+    state.viteBodyGlobalStyleTouched = true;
+    const normalizedValue = String(value || "").trim();
+    if (!normalizedValue) {
+      delete state.viteBodyGlobalStyleValues[property];
+      return;
+    }
+    state.viteBodyGlobalStyleValues[property] = normalizedValue;
+  }
+
   function applyRuntimeLibraries(rawLibraries) {
     const libraries = normalizeRuntimeLibraries(rawLibraries);
     clearInjectedLibraries();
@@ -1576,6 +1831,9 @@
     }
 
     state.runtimeLibraries = libraries;
+    if (IS_VITE_PROXY_MODE) {
+      scheduleViteHeadOrderEnsure();
+    }
     postToEditor({ type: "REL_LIBRARIES_APPLIED", payload: libraries });
   }
 
@@ -1639,6 +1897,9 @@
     script.dataset.relRuntime = "resizer-js";
     script.async = false;
     document.head.appendChild(script);
+    if (IS_VITE_PROXY_MODE) {
+      scheduleViteHeadOrderEnsure();
+    }
   }
 
   function applyRuntimeFonts(rawFonts) {
@@ -1666,6 +1927,9 @@
     }
 
     state.runtimeFonts = fonts;
+    if (IS_VITE_PROXY_MODE) {
+      scheduleViteHeadOrderEnsure();
+    }
     postToEditor({ type: "REL_FONTS_APPLIED", payload: fonts });
   }
 
@@ -1679,6 +1943,9 @@
         existing.remove();
       }
       state.themeCss = "";
+      if (IS_VITE_PROXY_MODE) {
+        scheduleViteHeadOrderEnsure();
+      }
       postToEditor({ type: "REL_THEME_APPLIED", payload: { active: false } });
       return;
     }
@@ -1691,6 +1958,9 @@
     }
 
     state.themeCss = normalized;
+    if (IS_VITE_PROXY_MODE) {
+      scheduleViteHeadOrderEnsure();
+    }
     postToEditor({ type: "REL_THEME_APPLIED", payload: { active: true } });
   }
 
@@ -1858,6 +2128,13 @@
       .filter(Boolean)
       .map((segment) => encodeURIComponent(segment))
       .join("/");
+  }
+
+  function logVite(message) {
+    if (!IS_VITE_PROXY_MODE) {
+      return;
+    }
+    console.log(`[REL VITE] ${String(message || "").trim()}`);
   }
 
   function postToEditor(message) {

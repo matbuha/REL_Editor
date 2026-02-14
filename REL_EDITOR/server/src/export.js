@@ -4,7 +4,7 @@ const { parseHTML } = require("linkedom");
 const { readPatch } = require("./file_io");
 const { PROJECT_TYPE_VITE_REACT_STYLE, normalizeProjectType } = require("./vite_runner");
 
-const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV"]);
+const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV", "SECTION"]);
 const LINK_ATTRIBUTE_KEYS = ["href", "target", "rel", "title"];
 
 async function exportSafe(projectRoot, indexPath, options) {

@@ -15,8 +15,8 @@ const {
   writePatch,
 } = require("./file_io");
 const { exportSafe, exportMerge } = require("./export");
+const { DevServerManager } = require("./devServerManager");
 const {
-  ViteRunner,
   PROJECT_TYPE_STATIC,
   PROJECT_TYPE_VITE_REACT_STYLE,
   DEFAULT_VITE_DEV_URL,
@@ -37,7 +37,7 @@ async function main() {
   const defaultsLibraries = normalizeDefaultsLibraries(config.defaultsLibraries);
   const defaultsFonts = normalizeDefaultsFonts(config.defaultsFonts);
   const defaultTheme = createDefaultTheme();
-  const viteRunner = new ViteRunner();
+  const viteRunner = new DevServerManager({ defaultDevUrl: currentDevUrl });
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -149,7 +149,12 @@ async function main() {
         projectRoot: currentProjectRoot,
         devUrl: currentDevUrl,
       });
+      const resolvedRoot = String(viteStatus.project_root || "").trim();
+      if (resolvedRoot) {
+        currentProjectRoot = resolvedRoot;
+      }
       currentDevUrl = normalizeDevUrl(viteStatus.dev_url || currentDevUrl);
+      console.log(`[REL VITE] Dev server running at ${currentDevUrl} (root: ${currentProjectRoot})`);
 
       res.json({
         ok: true,
@@ -159,6 +164,7 @@ async function main() {
         vite_status: viteStatus,
       });
     } catch (error) {
+      console.error(`[REL VITE] Failed to start dev server: ${error.message}`);
       res.status(400).json({
         ok: false,
         error: error.message,
@@ -170,6 +176,7 @@ async function main() {
   app.post("/api/vite/stop", async (req, res) => {
     try {
       await viteRunner.stop();
+      console.log("[REL VITE] Dev server stopped");
       res.json({
         ok: true,
         project_root: currentProjectRoot,
