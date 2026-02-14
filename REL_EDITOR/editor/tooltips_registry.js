@@ -66,6 +66,50 @@
     ["Collapsed -> hidden children", "Expanded -> visible children"],
     ["During drag, holding over a collapsed branch for ~750ms auto-expands it."]
   );
+  add(
+    "tree.context.duplicate",
+    "Duplicate (Context Menu)",
+    "Duplicates the clicked tree node and inserts a copy after it in the same parent.",
+    ["Right-click action"],
+    ["Duplicate section", "Duplicate card block"]
+  );
+  add(
+    "tree.context.delete",
+    "Delete (Context Menu)",
+    "Deletes the clicked tree node. Protected nodes cannot be deleted.",
+    ["Right-click action"],
+    ["Delete empty container"]
+  );
+  add(
+    "tree.context.moveBefore",
+    "Move before",
+    "Moves the clicked node one position up in the same parent (toward previous sibling).",
+    ["Right-click action"],
+    ["Move before previous section"],
+    ["Disabled when the node is already first."]
+  );
+  add(
+    "tree.context.moveAfter",
+    "Move after",
+    "Moves the clicked node one position down in the same parent (toward next sibling).",
+    ["Right-click action"],
+    ["Move after next section"],
+    ["Disabled when the node is already last."]
+  );
+  add(
+    "tree.context.insertContainerAbove",
+    "Insert container above",
+    "Inserts a new container directly before the clicked node in the same parent.",
+    ["Right-click action"],
+    ["Insert container above paragraph"]
+  );
+  add(
+    "tree.context.insertSectionBelow",
+    "Insert section below",
+    "Inserts a new section directly after the clicked node in the same parent.",
+    ["Right-click action"],
+    ["Insert section below hero block"]
+  );
 
   add("add.external", "Library Block", "Draggable block from active design library.", ["Drag and drop"], ["Bootstrap Card"]);
   [

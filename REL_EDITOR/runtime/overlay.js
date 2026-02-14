@@ -85,6 +85,78 @@
       tooltip: "Add an image placeholder at this edge. Example: insert image after paragraph.",
     },
   ];
+  const QUICK_ACTION_CLASS_TOKENS_REGEX = /\s+/;
+  const QUICK_ACTIONS = [
+    {
+      action: "duplicate",
+      label: "Duplicate",
+      tooltip: "Duplicate selected element with children. Inserts copy right after current element.",
+    },
+    {
+      action: "delete",
+      label: "Delete",
+      tooltip: "Delete selected element. Protected root elements (html/body) cannot be deleted.",
+    },
+    {
+      action: "move-up",
+      label: "Move Up",
+      tooltip: "Move selected element one position up inside the same parent.",
+    },
+    {
+      action: "move-down",
+      label: "Move Down",
+      tooltip: "Move selected element one position down inside the same parent.",
+    },
+    {
+      action: "wrap-container",
+      label: "Wrap with Container",
+      tooltip: "Insert a container at current position and move selected element inside it.",
+    },
+    {
+      action: "convert-section",
+      label: "Convert to Section",
+      tooltip: "Convert selected element to a section while preserving current content.",
+    },
+    {
+      action: "add-class",
+      label: "Add class",
+      tooltip: "Add one or more CSS classes (space-separated). Existing classes are kept.",
+    },
+  ];
+  const PREVIEW_CONTEXT_ACTIONS = [
+    {
+      action: "duplicate",
+      label: "Duplicate",
+      tooltip: "Create a copy after the current element.",
+    },
+    {
+      action: "delete",
+      label: "Delete",
+      tooltip: "Delete this element.",
+    },
+    {
+      action: "move-up",
+      label: "Move before",
+      tooltip: "Move one step up within the same parent.",
+    },
+    {
+      action: "move-down",
+      label: "Move after",
+      tooltip: "Move one step down within the same parent.",
+    },
+    {
+      action: "insert-container-above",
+      label: "Insert container above",
+      tooltip: "Insert a new container immediately before this element.",
+    },
+    {
+      action: "insert-section-below",
+      label: "Insert section below",
+      tooltip: "Insert a new section immediately after this element.",
+    },
+  ];
+  const QUICK_TOOLBAR_VIEWPORT_GAP_PX = 8;
+  const QUICK_TOOLBAR_DEFAULT_OFFSET_PX = 10;
   const IMPORTANT_STYLE_PROPS = new Set([
     "background",
     "background-color",
@@ -153,11 +225,31 @@
       targetFallbackSelector: "",
       placement: "",
     },
+    quickActions: {
+      root: null,
+      actionsRow: null,
+      classRow: null,
+      classInput: null,
+      classApplyBtn: null,
+      classCancelBtn: null,
+      visible: false,
+      classMode: false,
+      targetElement: null,
+      hiddenByEscape: false,
+    },
+    contextMenu: {
+      root: null,
+      visible: false,
+      targetElement: null,
+      targetRelId: "",
+      targetFallbackSelector: "",
+    },
   };
 
   ensureResizerModuleLoaded();
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("keydown", onDocumentKeyDown, true);
+  document.addEventListener("contextmenu", onDocumentContextMenu, true);
   document.addEventListener("mousemove", onDocumentMouseMove, true);
   document.addEventListener("mouseleave", onDocumentMouseLeave, true);
   document.addEventListener("dragover", onDocumentDragOver, true);
@@ -165,6 +257,8 @@
   document.addEventListener("dragleave", onDocumentDragLeave, true);
   window.addEventListener("resize", hideInlineAddBar, true);
   window.addEventListener("scroll", hideInlineAddBar, true);
+  window.addEventListener("resize", onViewportAdjusted, true);
+  window.addEventListener("scroll", onViewportAdjusted, true);
   window.addEventListener("message", onMessageFromEditor);
 
   blockTopNavigation();
@@ -184,6 +278,10 @@
       return;
     }
 
+    if (!target.closest('[data-rel-overlay-type="preview-context-menu"]')) {
+      hidePreviewContextMenu();
+    }
+
     if (target.closest("[data-rel-runtime='overlay-ui'], [data-rel-runtime='inline-add-bar']")) {
       return;
     }
@@ -200,6 +298,17 @@
     }
 
     if (event.key === "Escape") {
+      const closedContext = hidePreviewContextMenu();
+      const closedClassForm = setQuickActionsClassMode(false);
+      const closedToolbar = hideQuickActionsToolbar({
+        preserveSelection: true,
+        markEscape: true,
+      });
+      if (closedContext || closedClassForm || closedToolbar) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       event.preventDefault();
       clearSelection();
       postToEditor({ type: "REL_SELECTION_CLEARED" });
@@ -230,12 +339,47 @@
     }
   }
 
+  function onDocumentContextMenu(event) {
+    if (!state.editMode) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    if (target.closest('[data-rel-runtime="inline-add-bar"]')) {
+      event.preventDefault();
+      return;
+    }
+
+    if (target.closest('[data-rel-runtime="overlay-ui"]')) {
+      event.preventDefault();
+      return;
+    }
+
+    const contextTarget = resolveContextTargetElement(target);
+    if (!contextTarget) {
+      hidePreviewContextMenu();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    hideInlineAddBar();
+    selectElement(contextTarget);
+    showPreviewContextMenu(event.clientX, event.clientY, contextTarget);
+  }
+
   function onDocumentDragOver(event) {
     if (!state.pendingDragNodeTemplate) {
       return;
     }
 
     hideInlineAddBar();
+    hideQuickActionsToolbar({ preserveSelection: true });
+    hidePreviewContextMenu();
 
     const target = resolveDropTarget(event.target);
     if (!target) {
@@ -253,6 +397,8 @@
     }
 
     hideInlineAddBar();
+    hideQuickActionsToolbar({ preserveSelection: true });
+    hidePreviewContextMenu();
     event.preventDefault();
     event.stopPropagation();
 
@@ -294,7 +440,17 @@
     }
     if (state.pendingDragNodeTemplate || document.body?.classList.contains("rel-resizing")) {
       hideInlineAddBar();
+      hideQuickActionsToolbar({ preserveSelection: true });
+      hidePreviewContextMenu();
       return;
+    }
+
+    if (
+      state.selectedElement instanceof Element
+      && !state.quickActions.visible
+      && !state.quickActions.hiddenByEscape
+    ) {
+      showQuickActionsToolbar(state.selectedElement);
     }
 
     const target = event.target;
@@ -341,6 +497,11 @@
 
   function onDocumentMouseLeave() {
     hideInlineAddBar();
+  }
+
+  function onViewportAdjusted() {
+    hidePreviewContextMenu();
+    positionQuickActionsToolbar();
   }
 
   function ensureInlineAddBar() {
@@ -515,6 +676,837 @@
     hideInlineAddBar();
   }
 
+  function resolveContextTargetElement(rawTarget) {
+    let current = rawTarget instanceof Element ? rawTarget : null;
+    while (current) {
+      if (!SKIP_TAGS.has(current.tagName) && !isEditorSystemElement(current)) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }
+
+  function ensureQuickActionsToolbar() {
+    if (state.quickActions.root && state.quickActions.root.isConnected) {
+      return state.quickActions.root;
+    }
+
+    const root = document.createElement("div");
+    root.className = "rel-quick-actions-toolbar";
+    root.dataset.relRuntime = "overlay-ui";
+    root.dataset.relOverlayType = "quick-actions-toolbar";
+    root.setAttribute("aria-hidden", "true");
+
+    const actionsRow = document.createElement("div");
+    actionsRow.className = "rel-quick-actions-row";
+    root.appendChild(actionsRow);
+
+    for (const action of QUICK_ACTIONS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "rel-quick-action-btn";
+      button.dataset.relQuickAction = action.action;
+      button.textContent = action.label;
+      button.title = action.tooltip;
+      actionsRow.appendChild(button);
+    }
+
+    const classRow = document.createElement("div");
+    classRow.className = "rel-quick-actions-class-row hidden";
+
+    const classInput = document.createElement("input");
+    classInput.type = "text";
+    classInput.className = "rel-quick-actions-class-input";
+    classInput.placeholder = "Enter class names (space-separated)";
+    classInput.title = "Add class: type one or more class names separated by spaces. Example: card elevated";
+    classRow.appendChild(classInput);
+
+    const classApplyBtn = document.createElement("button");
+    classApplyBtn.type = "button";
+    classApplyBtn.className = "rel-quick-actions-class-apply";
+    classApplyBtn.textContent = "Apply";
+    classApplyBtn.title = "Apply entered class names to selected element";
+    classRow.appendChild(classApplyBtn);
+
+    const classCancelBtn = document.createElement("button");
+    classCancelBtn.type = "button";
+    classCancelBtn.className = "rel-quick-actions-class-cancel";
+    classCancelBtn.textContent = "Cancel";
+    classCancelBtn.title = "Close class input without applying changes";
+    classRow.appendChild(classCancelBtn);
+
+    root.appendChild(classRow);
+
+    root.addEventListener("click", (event) => {
+      const target = event.target;
+      const button = target instanceof Element
+        ? target.closest(".rel-quick-action-btn")
+        : null;
+      if (!(button instanceof HTMLButtonElement) || button.disabled) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      hidePreviewContextMenu();
+      const action = String(button.dataset.relQuickAction || "").trim();
+      if (action === "add-class") {
+        setQuickActionsClassMode(true);
+        return;
+      }
+      executeQuickActionRequest({ action });
+    });
+
+    classApplyBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      applyQuickActionsAddClass();
+    });
+
+    classCancelBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setQuickActionsClassMode(false);
+    });
+
+    classInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        applyQuickActionsAddClass();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setQuickActionsClassMode(false);
+      }
+    });
+
+    document.body.appendChild(root);
+    state.quickActions.root = root;
+    state.quickActions.actionsRow = actionsRow;
+    state.quickActions.classRow = classRow;
+    state.quickActions.classInput = classInput;
+    state.quickActions.classApplyBtn = classApplyBtn;
+    state.quickActions.classCancelBtn = classCancelBtn;
+    return root;
+  }
+
+  function ensurePreviewContextMenu() {
+    if (state.contextMenu.root && state.contextMenu.root.isConnected) {
+      return state.contextMenu.root;
+    }
+
+    const root = document.createElement("div");
+    root.className = "rel-preview-context-menu hidden";
+    root.dataset.relRuntime = "overlay-ui";
+    root.dataset.relOverlayType = "preview-context-menu";
+    root.setAttribute("aria-hidden", "true");
+
+    for (const action of PREVIEW_CONTEXT_ACTIONS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "rel-preview-context-item";
+      button.dataset.relPreviewContextAction = action.action;
+      button.textContent = action.label;
+      button.title = action.tooltip;
+      root.appendChild(button);
+    }
+
+    root.addEventListener("click", (event) => {
+      const target = event.target;
+      const button = target instanceof Element
+        ? target.closest(".rel-preview-context-item")
+        : null;
+      if (!(button instanceof HTMLButtonElement) || button.disabled) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const action = String(button.dataset.relPreviewContextAction || "").trim();
+      const relId = String(state.contextMenu.targetRelId || "").trim();
+      const fallbackSelector = String(state.contextMenu.targetFallbackSelector || "").trim();
+      hidePreviewContextMenu();
+      executeQuickActionRequest({
+        action,
+        relId,
+        fallbackSelector,
+      });
+    });
+
+    document.body.appendChild(root);
+    state.contextMenu.root = root;
+    return root;
+  }
+
+  function showQuickActionsToolbar(element) {
+    if (!(element instanceof Element)) {
+      hideQuickActionsToolbar();
+      return;
+    }
+    if (isEditorSystemElement(element)) {
+      hideQuickActionsToolbar();
+      return;
+    }
+    if (state.pendingDragNodeTemplate || document.body?.classList.contains("rel-resizing")) {
+      hideQuickActionsToolbar();
+      return;
+    }
+
+    const root = ensureQuickActionsToolbar();
+    state.quickActions.targetElement = element;
+    state.quickActions.visible = true;
+    root.classList.add("is-visible");
+    root.classList.remove("hidden");
+    root.setAttribute("aria-hidden", "false");
+    updateQuickActionsControlStates(element);
+    positionQuickActionsToolbar();
+  }
+
+  function hideQuickActionsToolbar(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const wasVisible = Boolean(state.quickActions.visible || state.quickActions.classMode);
+    if (!wasVisible && !opts.force) {
+      return false;
+    }
+
+    const root = state.quickActions.root;
+    if (root instanceof HTMLElement) {
+      root.classList.remove("is-visible");
+      root.classList.add("hidden");
+      root.setAttribute("aria-hidden", "true");
+    }
+    state.quickActions.visible = false;
+    setQuickActionsClassMode(false);
+    if (!opts.preserveSelection) {
+      state.quickActions.targetElement = null;
+    }
+    if (opts.markEscape) {
+      state.quickActions.hiddenByEscape = true;
+    }
+    return wasVisible;
+  }
+
+  function setQuickActionsClassMode(enabled) {
+    const turnOn = Boolean(enabled);
+    const row = state.quickActions.classRow;
+    if (!(row instanceof HTMLElement)) {
+      return false;
+    }
+    if (state.quickActions.classMode === turnOn) {
+      return false;
+    }
+    if (turnOn && state.quickActions.classInput instanceof HTMLInputElement && state.quickActions.classInput.disabled) {
+      return false;
+    }
+
+    state.quickActions.classMode = turnOn;
+    row.classList.toggle("hidden", !turnOn);
+    if (!turnOn) {
+      if (state.quickActions.classInput) {
+        state.quickActions.classInput.value = "";
+      }
+      return true;
+    }
+    if (state.quickActions.classInput) {
+      state.quickActions.classInput.focus();
+      state.quickActions.classInput.select();
+    }
+    positionQuickActionsToolbar();
+    return true;
+  }
+
+  function applyQuickActionsAddClass() {
+    const input = state.quickActions.classInput;
+    if (!(input instanceof HTMLInputElement)) {
+      return false;
+    }
+    const classValue = String(input.value || "").trim();
+    if (!classValue) {
+      setQuickActionsClassMode(false);
+      return false;
+    }
+    const applied = executeQuickActionRequest({
+      action: "add-class",
+      classValue,
+    });
+    if (applied) {
+      setQuickActionsClassMode(false);
+    }
+    return applied;
+  }
+
+  function positionQuickActionsToolbar() {
+    if (!state.quickActions.visible) {
+      return;
+    }
+
+    const root = state.quickActions.root;
+    const target = state.quickActions.targetElement;
+    if (!(root instanceof HTMLElement) || !(target instanceof Element) || !target.isConnected) {
+      hideQuickActionsToolbar({ preserveSelection: true });
+      return;
+    }
+
+    const rect = target.getBoundingClientRect();
+    if (!Number.isFinite(rect.top) || rect.width <= 0 || rect.height <= 0) {
+      hideQuickActionsToolbar({ preserveSelection: true });
+      return;
+    }
+
+    const previousVisibility = root.classList.contains("is-visible");
+    if (!previousVisibility) {
+      root.classList.add("is-visible");
+      root.classList.remove("hidden");
+      root.setAttribute("aria-hidden", "false");
+    }
+
+    root.style.left = "0px";
+    root.style.top = "0px";
+    const toolbarRect = root.getBoundingClientRect();
+    const toolbarWidth = Math.max(1, Math.round(toolbarRect.width || 0));
+    const toolbarHeight = Math.max(1, Math.round(toolbarRect.height || 0));
+
+    let left = rect.right - toolbarWidth;
+    let top = rect.top - toolbarHeight - QUICK_TOOLBAR_DEFAULT_OFFSET_PX;
+    if (top < QUICK_TOOLBAR_VIEWPORT_GAP_PX) {
+      top = rect.bottom + QUICK_TOOLBAR_DEFAULT_OFFSET_PX;
+    }
+    if (left < QUICK_TOOLBAR_VIEWPORT_GAP_PX) {
+      left = rect.left;
+    }
+
+    const maxLeft = Math.max(QUICK_TOOLBAR_VIEWPORT_GAP_PX, window.innerWidth - toolbarWidth - QUICK_TOOLBAR_VIEWPORT_GAP_PX);
+    const maxTop = Math.max(QUICK_TOOLBAR_VIEWPORT_GAP_PX, window.innerHeight - toolbarHeight - QUICK_TOOLBAR_VIEWPORT_GAP_PX);
+    left = clamp(left, QUICK_TOOLBAR_VIEWPORT_GAP_PX, maxLeft);
+    top = clamp(top, QUICK_TOOLBAR_VIEWPORT_GAP_PX, maxTop);
+
+    root.style.left = `${Math.round(left)}px`;
+    root.style.top = `${Math.round(top)}px`;
+  }
+
+  function showPreviewContextMenu(clientX, clientY, targetElement) {
+    if (!(targetElement instanceof Element)) {
+      hidePreviewContextMenu();
+      return;
+    }
+
+    const root = ensurePreviewContextMenu();
+    state.contextMenu.targetElement = targetElement;
+    state.contextMenu.targetRelId = ensureRelId(targetElement);
+    state.contextMenu.targetFallbackSelector = buildStableSelector(targetElement);
+    updatePreviewContextMenuControlStates(targetElement);
+
+    root.classList.remove("hidden");
+    root.classList.add("is-visible");
+    root.setAttribute("aria-hidden", "false");
+    state.contextMenu.visible = true;
+
+    root.style.left = "0px";
+    root.style.top = "0px";
+    const rect = root.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width || 0));
+    const height = Math.max(1, Math.round(rect.height || 0));
+
+    const maxLeft = Math.max(QUICK_TOOLBAR_VIEWPORT_GAP_PX, window.innerWidth - width - QUICK_TOOLBAR_VIEWPORT_GAP_PX);
+    const maxTop = Math.max(QUICK_TOOLBAR_VIEWPORT_GAP_PX, window.innerHeight - height - QUICK_TOOLBAR_VIEWPORT_GAP_PX);
+    const left = clamp(Number(clientX) + 8, QUICK_TOOLBAR_VIEWPORT_GAP_PX, maxLeft);
+    const top = clamp(Number(clientY) + 8, QUICK_TOOLBAR_VIEWPORT_GAP_PX, maxTop);
+
+    root.style.left = `${Math.round(left)}px`;
+    root.style.top = `${Math.round(top)}px`;
+  }
+
+  function hidePreviewContextMenu() {
+    const root = state.contextMenu.root;
+    const wasVisible = Boolean(state.contextMenu.visible);
+    if (root instanceof HTMLElement) {
+      root.classList.add("hidden");
+      root.classList.remove("is-visible");
+      root.setAttribute("aria-hidden", "true");
+    }
+    state.contextMenu.visible = false;
+    state.contextMenu.targetElement = null;
+    state.contextMenu.targetRelId = "";
+    state.contextMenu.targetFallbackSelector = "";
+    return wasVisible;
+  }
+
+  function updateQuickActionsControlStates(targetElement) {
+    const root = state.quickActions.root;
+    if (!(root instanceof HTMLElement) || !(targetElement instanceof Element)) {
+      return;
+    }
+    const availability = getQuickActionAvailability(targetElement);
+    const buttons = root.querySelectorAll(".rel-quick-action-btn");
+    for (const button of buttons) {
+      if (!(button instanceof HTMLButtonElement)) {
+        continue;
+      }
+      const action = String(button.dataset.relQuickAction || "").trim();
+      const info = availability[action] || { enabled: true, reason: "" };
+      button.disabled = !info.enabled;
+      const fallback = QUICK_ACTIONS.find((item) => item.action === action);
+      const baseTooltip = fallback ? fallback.tooltip : "";
+      button.title = info.enabled || !info.reason
+        ? baseTooltip
+        : `${baseTooltip} Disabled: ${info.reason}`.trim();
+    }
+
+    const addClassInfo = availability["add-class"] || { enabled: true, reason: "" };
+    const classInput = state.quickActions.classInput;
+    const classApplyBtn = state.quickActions.classApplyBtn;
+    if (classInput instanceof HTMLInputElement) {
+      classInput.disabled = !addClassInfo.enabled;
+    }
+    if (classApplyBtn instanceof HTMLButtonElement) {
+      classApplyBtn.disabled = !addClassInfo.enabled;
+      classApplyBtn.title = addClassInfo.enabled
+        ? "Apply entered class names to selected element"
+        : `Apply entered class names to selected element. Disabled: ${addClassInfo.reason}`;
+    }
+    if (!addClassInfo.enabled) {
+      setQuickActionsClassMode(false);
+    }
+  }
+
+  function updatePreviewContextMenuControlStates(targetElement) {
+    const root = state.contextMenu.root;
+    if (!(root instanceof HTMLElement) || !(targetElement instanceof Element)) {
+      return;
+    }
+    const availability = getQuickActionAvailability(targetElement);
+    const buttons = root.querySelectorAll(".rel-preview-context-item");
+    for (const button of buttons) {
+      if (!(button instanceof HTMLButtonElement)) {
+        continue;
+      }
+      const action = String(button.dataset.relPreviewContextAction || "").trim();
+      const info = availability[action] || { enabled: true, reason: "" };
+      button.disabled = !info.enabled;
+      const fallback = PREVIEW_CONTEXT_ACTIONS.find((item) => item.action === action);
+      const baseTooltip = fallback ? fallback.tooltip : "";
+      button.title = info.enabled || !info.reason
+        ? baseTooltip
+        : `${baseTooltip} Disabled: ${info.reason}`.trim();
+    }
+  }
+
+  function getQuickActionAvailability(targetElement) {
+    const element = targetElement instanceof Element ? targetElement : null;
+    if (!element) {
+      return {};
+    }
+
+    const blocked = isProtectedElement(element) || isEditorSystemElement(element);
+    const tagName = String(element.tagName || "").toUpperCase();
+    const previousSibling = findAdjacentMovableSibling(element, -1);
+    const nextSibling = findAdjacentMovableSibling(element, 1);
+    const parent = element.parentElement;
+    const hasParent = parent instanceof Element && !isEditorSystemElement(parent);
+
+    return {
+      duplicate: blocked
+        ? { enabled: false, reason: "Protected element" }
+        : { enabled: true, reason: "" },
+      delete: blocked
+        ? { enabled: false, reason: "Protected element" }
+        : { enabled: true, reason: "" },
+      "move-up": previousSibling
+        ? { enabled: true, reason: "" }
+        : { enabled: false, reason: "Already first" },
+      "move-down": nextSibling
+        ? { enabled: true, reason: "" }
+        : { enabled: false, reason: "Already last" },
+      "wrap-container": blocked || !hasParent
+        ? { enabled: false, reason: "Cannot wrap this element" }
+        : { enabled: true, reason: "" },
+      "convert-section": blocked
+        ? { enabled: false, reason: "Protected element" }
+        : (tagName === "SECTION"
+          ? { enabled: false, reason: "Already a section" }
+          : { enabled: true, reason: "" }),
+      "add-class": blocked
+        ? { enabled: false, reason: "Protected element" }
+        : { enabled: true, reason: "" },
+      "insert-container-above": blocked || !hasParent
+        ? { enabled: false, reason: "Cannot insert above this element" }
+        : { enabled: true, reason: "" },
+      "insert-section-below": blocked || !hasParent
+        ? { enabled: false, reason: "Cannot insert below this element" }
+        : { enabled: true, reason: "" },
+    };
+  }
+
+  function findAdjacentMovableSibling(element, direction) {
+    if (!(element instanceof Element) || !(element.parentElement instanceof Element)) {
+      return null;
+    }
+    const siblings = Array.from(element.parentElement.children).filter((child) => {
+      return child instanceof Element && !SKIP_TAGS.has(child.tagName) && !isEditorSystemElement(child);
+    });
+    const index = siblings.indexOf(element);
+    if (index < 0) {
+      return null;
+    }
+    const wantedIndex = direction < 0 ? index - 1 : index + 1;
+    if (wantedIndex < 0 || wantedIndex >= siblings.length) {
+      return null;
+    }
+    return siblings[wantedIndex];
+  }
+
+  function executeQuickActionRequest(payload) {
+    const raw = payload && typeof payload === "object" ? payload : {};
+    const action = String(raw.action || "").trim().toLowerCase();
+    if (!action) {
+      return false;
+    }
+
+    const relId = String(raw.relId || "").trim();
+    const fallbackSelector = String(raw.fallbackSelector || "").trim();
+    const targetElement = relId
+      ? resolveElementByReference(relId, fallbackSelector)
+      : (state.selectedElement instanceof Element ? state.selectedElement : null);
+    if (!(targetElement instanceof Element)) {
+      return false;
+    }
+
+    const availability = getQuickActionAvailability(targetElement);
+    const availabilityInfo = availability[action];
+    if (availabilityInfo && !availabilityInfo.enabled) {
+      return false;
+    }
+
+    if (action === "duplicate") {
+      return runDuplicateAction(targetElement);
+    }
+    if (action === "delete") {
+      return runDeleteAction(targetElement);
+    }
+    if (action === "move-up") {
+      return runMoveStepAction(targetElement, -1);
+    }
+    if (action === "move-down") {
+      return runMoveStepAction(targetElement, 1);
+    }
+    if (action === "wrap-container") {
+      return runWrapWithContainerAction(targetElement);
+    }
+    if (action === "convert-section") {
+      return runConvertToSectionAction(targetElement);
+    }
+    if (action === "add-class") {
+      return runAddClassAction(targetElement, raw.classValue);
+    }
+    if (action === "insert-container-above") {
+      return runInsertNearAction(targetElement, "container", "before");
+    }
+    if (action === "insert-section-below") {
+      return runInsertNearAction(targetElement, "section", "after");
+    }
+    return false;
+  }
+
+  function runDuplicateAction(targetElement) {
+    if (!(targetElement instanceof Element)) {
+      return false;
+    }
+
+    const targetRelId = ensureRelId(targetElement);
+    const html = buildRawHtmlFromElement(targetElement, {
+      removeIds: true,
+      replaceTagName: "",
+    });
+    if (!html) {
+      return false;
+    }
+
+    const parent = targetElement.parentElement;
+    const node = {
+      nodeId: generateNodeId(),
+      relId: generateRelId(),
+      type: "raw-html",
+      position: "after",
+      parentRelId: parent ? ensureRelId(parent) : "",
+      targetRelId,
+      targetFallbackSelector: buildStableSelector(targetElement),
+      props: { html },
+    };
+    const created = commitAddedNode(node, true);
+    return Boolean(created);
+  }
+
+  function runDeleteAction(targetElement) {
+    if (!(targetElement instanceof Element)) {
+      return false;
+    }
+    const relId = ensureRelId(targetElement);
+    return deleteNodeByReference({
+      relId,
+      fallbackSelector: buildStableSelector(targetElement),
+      silent: false,
+    });
+  }
+
+  function runMoveStepAction(targetElement, direction) {
+    if (!(targetElement instanceof Element)) {
+      return false;
+    }
+    const sibling = findAdjacentMovableSibling(targetElement, direction);
+    if (!(sibling instanceof Element)) {
+      return false;
+    }
+
+    return moveNodeByReference({
+      sourceRelId: ensureRelId(targetElement),
+      sourceFallbackSelector: buildStableSelector(targetElement),
+      targetRelId: ensureRelId(sibling),
+      targetFallbackSelector: buildStableSelector(sibling),
+      placement: direction < 0 ? "before" : "after",
+    }, { silent: false });
+  }
+
+  function runWrapWithContainerAction(targetElement) {
+    if (!(targetElement instanceof Element) || isProtectedElement(targetElement) || isEditorSystemElement(targetElement)) {
+      return false;
+    }
+    const targetRelId = ensureRelId(targetElement);
+    const parent = targetElement.parentElement;
+
+    const wrapperNode = {
+      nodeId: generateNodeId(),
+      relId: generateRelId(),
+      type: "container",
+      position: "before",
+      parentRelId: parent ? ensureRelId(parent) : "",
+      targetRelId,
+      targetFallbackSelector: buildStableSelector(targetElement),
+      props: { text: "" },
+    };
+    const created = commitAddedNode(wrapperNode, false);
+    if (!created || !created.relId) {
+      return false;
+    }
+
+    const moved = moveNodeByReference({
+      sourceRelId: targetRelId,
+      sourceFallbackSelector: buildStableSelector(targetElement),
+      targetRelId: created.relId,
+      targetFallbackSelector: created.fallbackSelector || "",
+      placement: "inside",
+    }, { silent: false });
+    if (!moved) {
+      return false;
+    }
+
+    const containerElement = resolveElementByReference(created.relId, created.fallbackSelector || "");
+    if (containerElement instanceof Element) {
+      selectElement(containerElement);
+      postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    }
+    return true;
+  }
+
+  function runConvertToSectionAction(targetElement) {
+    if (!(targetElement instanceof Element) || isProtectedElement(targetElement) || isEditorSystemElement(targetElement)) {
+      return false;
+    }
+    if (targetElement.tagName === "SECTION") {
+      return false;
+    }
+
+    const targetRelId = ensureRelId(targetElement);
+    const parent = targetElement.parentElement;
+    const html = buildRawHtmlFromElement(targetElement, {
+      removeIds: false,
+      replaceTagName: "section",
+    });
+    if (!html) {
+      return false;
+    }
+
+    const replacementNode = {
+      nodeId: generateNodeId(),
+      relId: generateRelId(),
+      type: "raw-html",
+      position: "before",
+      parentRelId: parent ? ensureRelId(parent) : "",
+      targetRelId,
+      targetFallbackSelector: buildStableSelector(targetElement),
+      props: { html },
+    };
+    const created = commitAddedNode(replacementNode, false);
+    if (!created || !created.relId) {
+      return false;
+    }
+
+    const deleted = deleteNodeByReference({
+      relId: targetRelId,
+      fallbackSelector: buildStableSelector(targetElement),
+      silent: false,
+    });
+    if (!deleted) {
+      return false;
+    }
+
+    const replacementElement = resolveElementByReference(created.relId, created.fallbackSelector || "");
+    if (replacementElement instanceof Element) {
+      selectElement(replacementElement);
+      postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    }
+    return true;
+  }
+
+  function runAddClassAction(targetElement, rawClassValue) {
+    if (!(targetElement instanceof Element) || isProtectedElement(targetElement) || isEditorSystemElement(targetElement)) {
+      return false;
+    }
+
+    const newTokens = String(rawClassValue || "")
+      .split(QUICK_ACTION_CLASS_TOKENS_REGEX)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    if (newTokens.length === 0) {
+      return false;
+    }
+
+    const existing = getUserClassString(targetElement)
+      .split(QUICK_ACTION_CLASS_TOKENS_REGEX)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    const seen = new Set(existing);
+    for (const token of newTokens) {
+      if (!seen.has(token)) {
+        seen.add(token);
+        existing.push(token);
+      }
+    }
+
+    const classValue = existing.join(" ");
+    const relId = ensureRelId(targetElement);
+    applyAttributes(relId, { class: classValue }, { silent: false });
+    postToEditor({
+      type: "REL_ATTRIBUTE_SYNC",
+      payload: {
+        relId,
+        attributes: { class: classValue },
+        fallbackSelector: buildStableSelector(targetElement),
+        stableSelector: buildStableSelector(targetElement),
+      },
+    });
+    postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    return true;
+  }
+
+  function runInsertNearAction(targetElement, type, position) {
+    if (!(targetElement instanceof Element) || isProtectedElement(targetElement) || isEditorSystemElement(targetElement)) {
+      return false;
+    }
+    const parent = targetElement.parentElement;
+    const node = {
+      nodeId: generateNodeId(),
+      relId: generateRelId(),
+      type,
+      position: position === "before" ? "before" : "after",
+      parentRelId: parent ? ensureRelId(parent) : "",
+      targetRelId: ensureRelId(targetElement),
+      targetFallbackSelector: buildStableSelector(targetElement),
+      props: type === "container" ? { text: "Container" } : {},
+    };
+    const created = commitAddedNode(node, true);
+    return Boolean(created);
+  }
+
+  function commitAddedNode(node, selectAfterCreate) {
+    const created = ensureAddedNode(node, Boolean(selectAfterCreate));
+    if (!created) {
+      return null;
+    }
+    postToEditor({ type: "REL_NODE_ADDED", payload: { node: created } });
+    postToEditor({ type: "REL_TREE_SNAPSHOT", payload: getTreeSnapshot() });
+    return created;
+  }
+
+  function buildRawHtmlFromElement(sourceElement, options) {
+    if (!(sourceElement instanceof Element)) {
+      return "";
+    }
+    const opts = options && typeof options === "object" ? options : {};
+    const replacementTag = String(opts.replaceTagName || "").trim().toLowerCase();
+    const removeIds = Boolean(opts.removeIds);
+
+    let clone = sourceElement.cloneNode(true);
+    if (!(clone instanceof Element)) {
+      return "";
+    }
+
+    if (replacementTag) {
+      const replacement = document.createElement(replacementTag);
+      copyAttributes(clone, replacement);
+      while (clone.firstChild) {
+        replacement.appendChild(clone.firstChild);
+      }
+      clone = replacement;
+    }
+
+    sanitizeRuntimeAttributes(clone, { removeRelIds: true, removeIds });
+    removeDisallowedNodes(clone);
+    return clone.outerHTML;
+  }
+
+  function copyAttributes(fromElement, toElement) {
+    if (!(fromElement instanceof Element) || !(toElement instanceof Element)) {
+      return;
+    }
+    for (const attr of Array.from(fromElement.attributes || [])) {
+      if (!attr || !attr.name) {
+        continue;
+      }
+      toElement.setAttribute(attr.name, attr.value);
+    }
+  }
+
+  function sanitizeRuntimeAttributes(rootElement, options) {
+    if (!(rootElement instanceof Element)) {
+      return;
+    }
+    const opts = options && typeof options === "object" ? options : {};
+    const removeRelIds = Boolean(opts.removeRelIds);
+    const removeIds = Boolean(opts.removeIds);
+    const allNodes = [rootElement, ...Array.from(rootElement.querySelectorAll("*"))];
+    for (const node of allNodes) {
+      if (!(node instanceof Element)) {
+        continue;
+      }
+      node.classList.remove(MANAGED_SELECTION_CLASS);
+      node.classList.remove(MANAGED_DROP_CLASS);
+      if (removeRelIds) {
+        node.removeAttribute("data-rel-id");
+      }
+      node.removeAttribute("data-rel-added-node-id");
+      node.removeAttribute("data-rel-managed");
+      node.removeAttribute("data-rel-runtime");
+      node.removeAttribute("data-rel-wrapper");
+      node.removeAttribute("data-rel-wrapper-for");
+      node.removeAttribute("data-rel-link-wrapper-for");
+      if (removeIds) {
+        node.removeAttribute("id");
+      }
+    }
+  }
+
+  function removeDisallowedNodes(rootElement) {
+    if (!(rootElement instanceof Element)) {
+      return;
+    }
+    const scripts = rootElement.querySelectorAll("script");
+    for (const node of scripts) {
+      node.remove();
+    }
+  }
+
   function onMessageFromEditor(event) {
     if (event.source !== window.parent) {
       return;
@@ -614,6 +1606,8 @@
 
     if (message.type === "REL_SET_DRAG_COMPONENT") {
       hideInlineAddBar();
+      hidePreviewContextMenu();
+      hideQuickActionsToolbar({ preserveSelection: true });
       state.pendingDragNodeTemplate = message.payload && message.payload.nodeTemplate
         ? message.payload.nodeTemplate
         : null;
@@ -623,7 +1617,14 @@
     if (message.type === "REL_CLEAR_DRAG_COMPONENT") {
       state.pendingDragNodeTemplate = null;
       hideInlineAddBar();
+      hidePreviewContextMenu();
       clearDropTarget();
+      return;
+    }
+
+    if (message.type === "REL_QUICK_ACTION") {
+      const payload = message.payload || {};
+      executeQuickActionRequest(payload);
       return;
     }
 
@@ -697,6 +1698,8 @@
   }
 
   function clearSelection() {
+    hidePreviewContextMenu();
+    hideQuickActionsToolbar({ force: true });
     if (state.selectedElement) {
       state.selectedElement.classList.remove(MANAGED_SELECTION_CLASS);
       state.selectedElement = null;
@@ -965,7 +1968,10 @@
     const relId = ensureRelId(element);
     element.classList.add(MANAGED_SELECTION_CLASS);
     state.selectedElement = element;
+    state.quickActions.hiddenByEscape = false;
+    state.quickActions.targetElement = element;
     notifyResizerSelectionChange(element);
+    showQuickActionsToolbar(element);
 
     const payload = buildSelectionPayload(element, relId);
     postToEditor({ type: "REL_SELECTION", payload });
@@ -1417,42 +2423,48 @@
   }
 
   function createNodeElement(type, props) {
+    const safeProps = props && typeof props === "object" ? props : {};
     switch (type) {
       case "section":
-        return createSectionElement(props);
+        return createSectionElement(safeProps);
       case "container":
-        return createTextNodeElement("div", props.text || "Container");
+        return createTextNodeElement(
+          "div",
+          Object.prototype.hasOwnProperty.call(safeProps, "text")
+            ? String(safeProps.text || "")
+            : "Container"
+        );
       case "heading-h1":
-        return createTextNodeElement("h1", props.text || "Heading H1");
+        return createTextNodeElement("h1", safeProps.text || "Heading H1");
       case "heading-h2":
-        return createTextNodeElement("h2", props.text || "Heading H2");
+        return createTextNodeElement("h2", safeProps.text || "Heading H2");
       case "heading-h3":
-        return createTextNodeElement("h3", props.text || "Heading H3");
+        return createTextNodeElement("h3", safeProps.text || "Heading H3");
       case "paragraph":
-        return createTextNodeElement("p", props.text || "Paragraph text");
+        return createTextNodeElement("p", safeProps.text || "Paragraph text");
       case "button": {
         const button = document.createElement("button");
         button.type = "button";
-        button.textContent = props.text || "Button";
+        button.textContent = safeProps.text || "Button";
         return button;
       }
       case "image": {
         const img = document.createElement("img");
-        img.src = normalizeAssetSrc(props.src || "https://via.placeholder.com/480x240.png?text=Image");
-        img.alt = props.alt || "Image";
+        img.src = normalizeAssetSrc(safeProps.src || "https://via.placeholder.com/480x240.png?text=Image");
+        img.alt = safeProps.alt || "Image";
         return img;
       }
       case "link": {
         const anchor = document.createElement("a");
-        anchor.href = props.href || "#";
-        anchor.textContent = props.text || "Link";
+        anchor.href = safeProps.href || "#";
+        anchor.textContent = safeProps.text || "Link";
         return anchor;
       }
       case "card":
         return createBasicCard();
       case "spacer": {
         const spacer = document.createElement("div");
-        spacer.style.height = props.height || "24px";
+        spacer.style.height = safeProps.height || "24px";
         spacer.style.width = "100%";
         spacer.setAttribute("aria-hidden", "true");
         return spacer;
@@ -1465,7 +2477,7 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "btn btn-primary";
-        btn.textContent = props.text || "Bootstrap Button";
+        btn.textContent = safeProps.text || "Bootstrap Button";
         return btn;
       }
       case "bootstrap-grid":
@@ -1476,7 +2488,7 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "button is-primary";
-        btn.textContent = props.text || "Bulma Button";
+        btn.textContent = safeProps.text || "Bulma Button";
         return btn;
       }
       case "bulma-card":
@@ -1485,18 +2497,20 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "contrast";
-        btn.textContent = props.text || "Pico Button";
+        btn.textContent = safeProps.text || "Pico Button";
         return btn;
       }
       case "pico-link": {
         const link = document.createElement("a");
-        link.href = props.href || "#";
+        link.href = safeProps.href || "#";
         link.className = "contrast";
-        link.textContent = props.text || "Pico Link";
+        link.textContent = safeProps.text || "Pico Link";
         return link;
       }
+      case "raw-html":
+        return createRawHtmlElement(safeProps);
       default:
-        return createTextNodeElement("div", props.text || "New element");
+        return createTextNodeElement("div", safeProps.text || "New element");
     }
   }
 
@@ -1512,6 +2526,23 @@
       section.textContent = String(props.text || "");
     }
     return section;
+  }
+
+  function createRawHtmlElement(props) {
+    const html = String(props && props.html ? props.html : "").trim();
+    if (!html) {
+      return null;
+    }
+
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const first = template.content.firstElementChild;
+    if (!(first instanceof Element)) {
+      return null;
+    }
+    sanitizeRuntimeAttributes(first, { removeRelIds: true, removeIds: false });
+    removeDisallowedNodes(first);
+    return first;
   }
 
   function createBasicCard() {
@@ -2701,6 +3732,16 @@
 
   function generateNodeId() {
     return `node-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function clamp(value, min, max) {
+    const safeMin = Number.isFinite(min) ? min : 0;
+    const safeMax = Number.isFinite(max) ? max : safeMin;
+    const numeric = Number.isFinite(value) ? value : safeMin;
+    if (safeMax < safeMin) {
+      return safeMin;
+    }
+    return Math.min(safeMax, Math.max(safeMin, numeric));
   }
 
   function encodePath(pathValue) {

@@ -221,6 +221,14 @@
     "input[type=\"file\"][hidden]",
     "#uploadImageInput",
   ];
+  const TREE_CONTEXT_MENU_ACTIONS = [
+    { action: "duplicate", label: "Duplicate", tooltipKey: "tree.context.duplicate" },
+    { action: "delete", label: "Delete", tooltipKey: "tree.context.delete" },
+    { action: "move-before", label: "Move before", tooltipKey: "tree.context.moveBefore" },
+    { action: "move-after", label: "Move after", tooltipKey: "tree.context.moveAfter" },
+    { action: "insert-container-above", label: "Insert container above", tooltipKey: "tree.context.insertContainerAbove" },
+    { action: "insert-section-below", label: "Insert section below", tooltipKey: "tree.context.insertSectionBelow" },
+  ];
 
   const state = {
     projectRoot: "",
@@ -311,6 +319,11 @@
       dragging: false,
       bound: false,
       dragSourceRow: null,
+    },
+    treeContextMenu: {
+      root: null,
+      visible: false,
+      targetRelId: "",
     },
     controls: {
       styleInputs: {},
@@ -680,6 +693,7 @@
 
   function initTreeUi() {
     ensureTreeDragTooltip();
+    ensureTreeContextMenu();
     if (state.treeUi.bound || !(dom.treeContainer instanceof Element)) {
       return;
     }
@@ -715,6 +729,18 @@
       clearTreeDropIndicator();
       hideTreeDragTooltip();
     });
+
+    dom.treeContainer.addEventListener("contextmenu", (event) => {
+      const target = event.target;
+      const item = resolveTreeItemFromContextTarget(target);
+      if (!item) {
+        hideTreeContextMenu();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      openTreeContextMenu(item, event.clientX, event.clientY);
+    });
   }
 
   function ensureTreeDragTooltip() {
@@ -734,6 +760,254 @@
     tooltip.setAttribute("aria-hidden", "true");
     parent.appendChild(tooltip);
     state.treeUi.dragTooltipEl = tooltip;
+  }
+
+  function ensureTreeContextMenu() {
+    if (state.treeContextMenu.root && state.treeContextMenu.root.isConnected) {
+      return state.treeContextMenu.root;
+    }
+
+    const root = document.createElement("div");
+    root.className = "tree-context-menu hidden";
+    root.setAttribute("aria-hidden", "true");
+
+    for (const item of TREE_CONTEXT_MENU_ACTIONS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tree-context-item";
+      button.dataset.treeContextAction = item.action;
+      button.textContent = item.label;
+      setTooltipKey(button, item.tooltipKey);
+      root.appendChild(button);
+    }
+
+    root.addEventListener("click", (event) => {
+      const target = event.target;
+      const button = target instanceof Element
+        ? target.closest(".tree-context-item")
+        : null;
+      if (!(button instanceof HTMLButtonElement) || button.disabled) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const action = String(button.dataset.treeContextAction || "").trim();
+      const relId = String(state.treeContextMenu.targetRelId || "").trim();
+      hideTreeContextMenu();
+      applyTreeContextAction(action, relId);
+    });
+
+    document.body.appendChild(root);
+    state.treeContextMenu.root = root;
+    scheduleTooltipCoverageCheck();
+    return root;
+  }
+
+  function resolveTreeItemFromContextTarget(target) {
+    if (!(target instanceof Element)) {
+      return null;
+    }
+    const row = target.closest(".tree-row");
+    if (!(row instanceof HTMLElement)) {
+      return null;
+    }
+    const relId = String(row.dataset.relId || "").trim();
+    if (!relId) {
+      return null;
+    }
+    return state.treeUi.nodeByRelId[relId] || null;
+  }
+
+  function openTreeContextMenu(item, clientX, clientY) {
+    const safeItem = item && typeof item === "object" ? item : null;
+    if (!safeItem || !safeItem.relId) {
+      hideTreeContextMenu();
+      return;
+    }
+
+    const root = ensureTreeContextMenu();
+    const relId = String(safeItem.relId || "").trim();
+    if (!relId) {
+      hideTreeContextMenu();
+      return;
+    }
+
+    state.treeContextMenu.targetRelId = relId;
+    if (state.selectedRelId !== relId) {
+      sendToOverlay({
+        type: "REL_SELECT_BY_REL_ID",
+        payload: { relId },
+      });
+    }
+    markActiveTreeNode(relId);
+
+    updateTreeContextMenuState(safeItem);
+
+    root.classList.remove("hidden");
+    root.setAttribute("aria-hidden", "false");
+    state.treeContextMenu.visible = true;
+
+    root.style.left = "0px";
+    root.style.top = "0px";
+    const menuRect = root.getBoundingClientRect();
+    const maxLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
+    const maxTop = Math.max(8, window.innerHeight - menuRect.height - 8);
+    const left = clamp(Number(clientX) + 8, 8, maxLeft);
+    const top = clamp(Number(clientY) + 8, 8, maxTop);
+    root.style.left = `${Math.round(left)}px`;
+    root.style.top = `${Math.round(top)}px`;
+    scheduleTooltipCoverageCheck();
+  }
+
+  function hideTreeContextMenu() {
+    const root = state.treeContextMenu.root;
+    const wasVisible = Boolean(state.treeContextMenu.visible);
+    if (root instanceof HTMLElement) {
+      root.classList.add("hidden");
+      root.setAttribute("aria-hidden", "true");
+    }
+    state.treeContextMenu.visible = false;
+    state.treeContextMenu.targetRelId = "";
+    return wasVisible;
+  }
+
+  function updateTreeContextMenuState(item) {
+    const root = state.treeContextMenu.root;
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    const availability = getTreeContextActionAvailability(item);
+    const buttons = root.querySelectorAll(".tree-context-item");
+    for (const button of buttons) {
+      if (!(button instanceof HTMLButtonElement)) {
+        continue;
+      }
+      const action = String(button.dataset.treeContextAction || "").trim();
+      const info = availability[action] || { enabled: true, reason: "" };
+      button.disabled = !info.enabled;
+      const tooltipMeta = TREE_CONTEXT_MENU_ACTIONS.find((entry) => entry.action === action) || null;
+      const baseTitle = tooltipMeta ? String((window.REL_TOOLTIPS_REGISTRY || {})[tooltipMeta.tooltipKey]?.description || "") : "";
+      button.title = info.enabled || !info.reason
+        ? baseTitle
+        : `${baseTitle} Disabled: ${info.reason}`.trim();
+    }
+  }
+
+  function getTreeContextActionAvailability(item) {
+    const safeItem = item && typeof item === "object" ? item : null;
+    if (!safeItem) {
+      return {};
+    }
+
+    const blocked = Boolean(safeItem.isProtected || safeItem.isSystem);
+    const siblingInfo = getTreeSiblingInfo(safeItem.relId);
+    const hasPrev = siblingInfo.index > 0;
+    const hasNext = siblingInfo.index >= 0 && siblingInfo.index < siblingInfo.relIds.length - 1;
+    const canInsertAround = !blocked && Boolean(String(safeItem.parentRelId || "").trim());
+
+    return {
+      duplicate: blocked ? { enabled: false, reason: "Protected element" } : { enabled: true, reason: "" },
+      delete: blocked ? { enabled: false, reason: "Protected element" } : { enabled: true, reason: "" },
+      "move-before": hasPrev ? { enabled: true, reason: "" } : { enabled: false, reason: "Already first" },
+      "move-after": hasNext ? { enabled: true, reason: "" } : { enabled: false, reason: "Already last" },
+      "insert-container-above": canInsertAround
+        ? { enabled: true, reason: "" }
+        : { enabled: false, reason: "Cannot insert at this level" },
+      "insert-section-below": canInsertAround
+        ? { enabled: true, reason: "" }
+        : { enabled: false, reason: "Cannot insert at this level" },
+    };
+  }
+
+  function getTreeSiblingInfo(relId) {
+    const safeRelId = String(relId || "").trim();
+    const item = safeRelId ? (state.treeUi.nodeByRelId[safeRelId] || null) : null;
+    if (!item) {
+      return { relIds: [], index: -1 };
+    }
+    const parentRelId = String(item.parentRelId || "").trim();
+    const relIds = state.lastTreeSnapshot
+      .filter((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+        if (entry.isSystem || entry.isProtected) {
+          return false;
+        }
+        return String(entry.parentRelId || "").trim() === parentRelId;
+      })
+      .map((entry) => String(entry.relId || "").trim())
+      .filter(Boolean);
+    return {
+      relIds,
+      index: relIds.indexOf(safeRelId),
+    };
+  }
+
+  function applyTreeContextAction(actionName, forcedRelId) {
+    const action = String(actionName || "").trim().toLowerCase();
+    const relId = String(forcedRelId || state.treeContextMenu.targetRelId || "").trim();
+    if (!action || !relId) {
+      return;
+    }
+    const item = state.treeUi.nodeByRelId[relId] || null;
+    if (!item) {
+      return;
+    }
+
+    const sourceSelector = String(state.selectorMap[relId] || state.elementsMap[relId] || "").trim();
+    if (action === "duplicate" || action === "delete") {
+      sendToOverlay({
+        type: "REL_QUICK_ACTION",
+        payload: {
+          action: action === "duplicate" ? "duplicate" : "delete",
+          relId,
+          fallbackSelector: sourceSelector,
+        },
+      });
+      return;
+    }
+
+    if (action === "move-before" || action === "move-after") {
+      const siblingInfo = getTreeSiblingInfo(relId);
+      const targetIndex = action === "move-before" ? siblingInfo.index - 1 : siblingInfo.index + 1;
+      if (targetIndex < 0 || targetIndex >= siblingInfo.relIds.length) {
+        return;
+      }
+      const targetRelId = siblingInfo.relIds[targetIndex];
+      const targetSelector = String(state.selectorMap[targetRelId] || state.elementsMap[targetRelId] || "").trim();
+      sendToOverlay({
+        type: "REL_MOVE_NODE",
+        payload: {
+          sourceRelId: relId,
+          targetRelId,
+          sourceFallbackSelector: sourceSelector,
+          targetFallbackSelector: targetSelector,
+          placement: action === "move-before" ? "before" : "after",
+        },
+      });
+      return;
+    }
+
+    if (action === "insert-container-above" || action === "insert-section-below") {
+      const type = action === "insert-container-above" ? "container" : "section";
+      const position = action === "insert-container-above" ? "before" : "after";
+      sendToOverlay({
+        type: "REL_ADD_NODE",
+        payload: {
+          node: {
+            nodeId: generateId("node"),
+            relId: generateId("rel-added"),
+            type,
+            position,
+            parentRelId: String(item.parentRelId || "").trim(),
+            targetRelId: relId,
+            targetFallbackSelector: sourceSelector,
+            props: type === "container" ? { text: "Container" } : {},
+          },
+        },
+      });
+    }
   }
 
   function showTreeDragTooltip(text, clientX, clientY) {
@@ -769,6 +1043,7 @@
   function bindEvents() {
     window.addEventListener("message", onMessageFromOverlay);
     window.addEventListener("keydown", onEditorKeyDown, true);
+    document.addEventListener("pointerdown", onEditorPointerDown, true);
     window.addEventListener("beforeunload", () => {
       closeViteStatusSocket({ manual: true });
       clearViteStatusReconnectTimer();
@@ -956,6 +1231,15 @@
 
   function onEditorKeyDown(event) {
     const key = event.key;
+    if (key === "Escape") {
+      const closed = hideTreeContextMenu();
+      if (closed) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+
     if (key !== "Delete" && key !== "Backspace") {
       return;
     }
@@ -975,6 +1259,17 @@
     event.preventDefault();
     event.stopPropagation();
     requestDeleteSelected("keyboard");
+  }
+
+  function onEditorPointerDown(event) {
+    if (!state.treeContextMenu.visible) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && target.closest(".tree-context-menu")) {
+      return;
+    }
+    hideTreeContextMenu();
   }
 
   function requestDeleteSelected(source) {
@@ -3041,6 +3336,7 @@
     state.treeUi.parentByRelId = {};
     state.treeUi.nodeByRelId = {};
     state.treeUi.query = "";
+    hideTreeContextMenu();
     clearTreeDropIndicator();
     clearTreeDragState();
 
@@ -3758,6 +4054,7 @@
     if (msg.type === "REL_SELECTION_CLEARED") {
       state.selectedRelId = null;
       state.lastSelection = null;
+      hideTreeContextMenu();
       clearSelectionUi();
       return;
     }
@@ -3782,6 +4079,11 @@
 
     if (msg.type === "REL_NODE_MOVED") {
       handleNodeMoved(msg.payload);
+      return;
+    }
+
+    if (msg.type === "REL_ATTRIBUTE_SYNC") {
+      handleAttributeSync(msg.payload);
       return;
     }
 
@@ -4530,6 +4832,53 @@
     setStatus("Tree move applied");
   }
 
+  function handleAttributeSync(payload) {
+    const info = payload && typeof payload === "object" ? payload : {};
+    const relId = String(info.relId || "").trim();
+    const attributes = info.attributes && typeof info.attributes === "object" ? info.attributes : {};
+    if (!relId || Object.keys(attributes).length === 0) {
+      return;
+    }
+
+    const fallbackSelector = String(info.fallbackSelector || "").trim();
+    const stableSelector = String(info.stableSelector || "").trim();
+    if (fallbackSelector) {
+      state.elementsMap[relId] = fallbackSelector;
+    }
+    if (stableSelector) {
+      state.selectorMap[relId] = stableSelector;
+    } else if (fallbackSelector && !state.selectorMap[relId]) {
+      state.selectorMap[relId] = fallbackSelector;
+    }
+
+    let requiresTreeRefresh = false;
+    for (const [field, rawValue] of Object.entries(attributes)) {
+      const safeField = String(field || "").trim();
+      if (!safeField) {
+        continue;
+      }
+      const normalized = normalizeAttributeValue(safeField, rawValue);
+      upsertAttributeMeta(relId, safeField, normalized);
+      if (safeField === "id" || safeField === "class") {
+        requiresTreeRefresh = true;
+      }
+    }
+
+    if (state.selectedRelId === relId && state.lastSelection) {
+      updateSelectionInfo(
+        state.lastSelection,
+        state.overridesMeta[relId] || {},
+        state.attributesMeta[relId] || {},
+        state.linksMeta[relId] || {}
+      );
+      updateAttributesPanel(state.lastSelection, state.attributesMeta[relId] || {});
+    }
+
+    if (requiresTreeRefresh) {
+      requestTreeSnapshot();
+    }
+  }
+
   function upsertMovedNodeOperation(operation) {
     const normalized = normalizeMovedNodeEntry(operation);
     if (!normalized) {
@@ -4598,6 +4947,12 @@
     }
 
     markActiveTreeNode(state.selectedRelId || "");
+    if (state.treeContextMenu.visible) {
+      const targetRelId = String(state.treeContextMenu.targetRelId || "").trim();
+      if (!targetRelId || !state.treeUi.nodeByRelId[targetRelId]) {
+        hideTreeContextMenu();
+      }
+    }
     scheduleTooltipCoverageCheck();
   }
 
@@ -4847,6 +5202,7 @@
       event.preventDefault();
       return;
     }
+    hideTreeContextMenu();
 
     const sourceRelId = String(item.relId || "").trim();
     if (!sourceRelId) {

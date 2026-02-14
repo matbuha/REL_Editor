@@ -65,6 +65,122 @@
   border-color: rgba(22, 98, 178, 0.65);
 }
 
+.rel-quick-actions-toolbar {
+  position: fixed;
+  z-index: 2147483603;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 240px;
+  max-width: min(90vw, 540px);
+  border: 1px solid rgba(20, 46, 76, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 12px 24px rgba(14, 24, 42, 0.28);
+  padding: 6px;
+  pointer-events: auto;
+}
+
+.rel-quick-actions-toolbar.hidden {
+  display: none !important;
+}
+
+.rel-quick-actions-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rel-quick-action-btn {
+  border: 1px solid rgba(28, 79, 136, 0.32);
+  border-radius: 999px;
+  background: #f4f9ff;
+  color: #103556;
+  font: 11px/1.2 "Segoe UI", Arial, sans-serif;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+.rel-quick-action-btn:hover:not(:disabled) {
+  background: #e5f2ff;
+  border-color: rgba(26, 92, 166, 0.62);
+}
+
+.rel-quick-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.rel-quick-actions-class-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rel-quick-actions-class-row.hidden {
+  display: none !important;
+}
+
+.rel-quick-actions-class-input {
+  flex: 1 1 auto;
+  min-width: 160px;
+  border: 1px solid rgba(20, 46, 76, 0.3);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font: 12px/1.3 "Segoe UI", Arial, sans-serif;
+  color: #102b43;
+  background: #ffffff;
+}
+
+.rel-quick-actions-class-row button {
+  border: 1px solid rgba(20, 46, 76, 0.3);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font: 11px/1.2 "Segoe UI", Arial, sans-serif;
+  color: #102b43;
+  background: #f7fbff;
+}
+
+.rel-preview-context-menu {
+  position: fixed;
+  z-index: 2147483604;
+  min-width: 220px;
+  max-width: min(92vw, 320px);
+  border: 1px solid rgba(23, 46, 74, 0.34);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.99);
+  box-shadow: 0 14px 28px rgba(13, 24, 44, 0.3);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.rel-preview-context-menu.hidden {
+  display: none !important;
+}
+
+.rel-preview-context-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #122f4f;
+  font: 12px/1.3 "Segoe UI", Arial, sans-serif;
+  padding: 6px 8px;
+}
+
+.rel-preview-context-item:hover:not(:disabled) {
+  border-color: rgba(20, 82, 147, 0.28);
+  background: #edf5ff;
+}
+
+.rel-preview-context-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .rel-resize-overlay {
   position: fixed;
   z-index: 2147483600;
