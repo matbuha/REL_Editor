@@ -8,45 +8,62 @@
 </head>
 <body>
   <header class="app-header">
-    <div class="brand">REL_EDITOR</div>
-    <div class="project-picker">
-      <label>
-        Project Root
-        <input id="projectRootInput" type="text" placeholder="C:/path/to/project">
-      </label>
-      <label>
-        Project Type
-        <select id="projectTypeSelect">
-          <option value="static-html">Static HTML</option>
-          <option value="vite-react-style">Vite React (Style only)</option>
-        </select>
-      </label>
-      <label id="indexPathRow">
-        Index Path
-        <input id="indexPathInput" type="text" placeholder="index.html">
-      </label>
-      <div id="viteControlsRow" class="vite-controls hidden">
+    <label id="previewBreakpointRow" class="header-preview-control">
+      Preview
+      <select id="previewBreakpointSelect">
+        <option value="desktop">Desktop</option>
+        <option value="tablet">Tablet</option>
+        <option value="mobile">Mobile</option>
+      </select>
+    </label>
+    <button id="hamburgerMenuBtn" class="hamburger-btn" type="button" aria-label="Open menu" aria-haspopup="true" aria-expanded="false">Menu</button>
+  </header>
+  <div id="hamburgerMenuBackdrop" class="topbar-menu-backdrop hidden" aria-hidden="true"></div>
+  <aside id="hamburgerMenuPanel" class="topbar-menu-panel hidden" aria-hidden="true">
+    <div class="topbar-menu-header">
+      <div class="brand">REL_EDITOR</div>
+      <button id="hamburgerMenuCloseBtn" type="button">Close</button>
+    </div>
+
+    <section class="topbar-menu-section">
+      <h3>Project</h3>
+      <div class="project-picker">
         <label>
-          Dev URL
-          <input id="devUrlInput" type="text" placeholder="http://localhost:5173">
+          Project Root
+          <input id="projectRootInput" type="text" placeholder="C:/path/to/project">
         </label>
-        <button id="startDevServerBtn" type="button">Start Dev Server</button>
-        <button id="stopDevServerBtn" type="button">Stop Dev Server</button>
-        <span id="viteStatusText" class="vite-status">Vite: stopped</span>
+        <label>
+          Project Type
+          <select id="projectTypeSelect">
+            <option value="static-html">Static HTML</option>
+            <option value="vite-react-style">Vite React (Style only)</option>
+          </select>
+        </label>
+        <label id="indexPathRow">
+          Index Path
+          <input id="indexPathInput" type="text" placeholder="index.html">
+        </label>
+        <div id="viteControlsRow" class="vite-controls hidden">
+          <label>
+            Dev URL
+            <input id="devUrlInput" type="text" placeholder="http://localhost:5173">
+          </label>
+          <button id="startDevServerBtn" type="button">Start Dev Server</button>
+          <button id="stopDevServerBtn" type="button">Stop Dev Server</button>
+          <span id="viteStatusText" class="vite-status">Vite: stopped</span>
+        </div>
+        <pre id="viteLogText" class="vite-log hidden"></pre>
+        <button id="loadProjectBtn" type="button">Load Project</button>
       </div>
-      <pre id="viteLogText" class="vite-log hidden"></pre>
-      <button id="loadProjectBtn" type="button">Load Project</button>
-      <button id="savePatchBtn" type="button">Save Patch</button>
-      <button id="exportSafeBtn" type="button">Export Safe</button>
-      <button id="resetLayoutBtn" type="button">Reset Layout</button>
-      <label id="previewBreakpointRow">
-        Preview
-        <select id="previewBreakpointSelect">
-          <option value="desktop">Desktop</option>
-          <option value="tablet">Tablet</option>
-          <option value="mobile">Mobile</option>
-        </select>
-      </label>
+    </section>
+
+    <section class="topbar-menu-section">
+      <h3>Actions</h3>
+      <div class="topbar-menu-actions">
+        <button id="savePatchBtn" type="button">Save Patch</button>
+        <button id="exportSafeBtn" type="button">Export Safe</button>
+        <button id="resetLayoutBtn" type="button">Reset Layout</button>
+      </div>
       <div id="previewWidthRow" class="preview-width-row hidden">
         <label>
           Width
@@ -54,54 +71,58 @@
         </label>
         <span id="previewWidthValue" class="preview-width-value">768px</span>
       </div>
-    </div>
-    <div class="libraries-box">
-      <label>
-        Design Library
-        <select id="designLibrarySelect">
-          <option value="none">None</option>
-          <option value="bootstrap">Bootstrap 5</option>
-          <option value="bulma">Bulma</option>
-          <option value="pico">Pico.css</option>
-          <option value="tailwind">Tailwind CDN</option>
-        </select>
-      </label>
-      <label class="inline-check">
-        <input id="bootstrapJsCheckbox" type="checkbox">
-        Bootstrap JS bundle
-      </label>
-      <label>
-        Icon Set
-        <select id="iconSetSelect">
-          <option value="none">None</option>
-          <option value="material-icons">Material Icons</option>
-          <option value="font-awesome">Font Awesome Free</option>
-        </select>
-      </label>
-      <label class="inline-check">
-        <input id="animateCssCheckbox" type="checkbox">
-        Animate.css
-      </label>
-    </div>
-    <div class="fonts-box">
-      <label>
-        Font Library
-        <select id="fontLibrarySelect">
-          <option value="none">None</option>
-          <option value="google">Google Fonts</option>
-          <option value="bunny">Bunny Fonts</option>
-          <option value="adobe-edge">Adobe Edge Fonts</option>
-        </select>
-      </label>
-      <div id="fontLibraryFamilyRow" class="font-library-row hidden">
-        <input id="fontLibraryFamilyInput" type="text" placeholder="Poppins">
-        <button id="addFontFamilyBtn" type="button">Add Font</button>
+      <div id="statusText" class="status">Ready</div>
+      <pre id="exportReport" class="export-report hidden"></pre>
+    </section>
+
+    <section class="topbar-menu-section">
+      <h3>Libraries</h3>
+      <div class="libraries-box">
+        <label>
+          Design Library
+          <select id="designLibrarySelect">
+            <option value="none">None</option>
+            <option value="bootstrap">Bootstrap 5</option>
+            <option value="bulma">Bulma</option>
+            <option value="pico">Pico.css</option>
+            <option value="tailwind">Tailwind CDN</option>
+          </select>
+        </label>
+        <label class="inline-check">
+          <input id="bootstrapJsCheckbox" type="checkbox">
+          Bootstrap JS bundle
+        </label>
+        <label>
+          Icon Set
+          <select id="iconSetSelect">
+            <option value="none">None</option>
+            <option value="material-icons">Material Icons</option>
+            <option value="font-awesome">Font Awesome Free</option>
+          </select>
+        </label>
+        <label class="inline-check">
+          <input id="animateCssCheckbox" type="checkbox">
+          Animate.css
+        </label>
       </div>
-      <div id="fontFamiliesList" class="font-families-list"></div>
-    </div>
-    <div id="statusText" class="status">Ready</div>
-    <pre id="exportReport" class="export-report hidden"></pre>
-  </header>
+      <div class="fonts-box">
+        <label>
+          Font Library
+          <select id="fontLibrarySelect">
+            <option value="none">None</option>
+            <option value="google">Google Fonts</option>
+            <option value="bunny">Bunny Fonts</option>
+            <option value="adobe-edge">Adobe Edge Fonts</option>
+          </select>
+        </label>
+        <div id="fontLibraryFamilyRow" class="font-library-row hidden">
+          <input id="fontLibraryFamilyInput" type="text" placeholder="Poppins">
+          <button id="addFontFamilyBtn" type="button">Add Font</button>
+        </div>
+        <div id="fontFamiliesList" class="font-families-list"></div>
+      </div>
+    </section>
+  </aside>
 
   <main id="layoutRoot" class="layout">
     <section class="panel panel-left">

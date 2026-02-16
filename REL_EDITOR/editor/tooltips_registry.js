@@ -35,6 +35,8 @@
   add("top.savePatch", "Save Patch", "Writes patch.json and override.css under rel_editor.", ["Button action"], ["rel_editor/patch.json"]);
   add("top.exportSafe", "Export Safe", "Exports REL_* files without touching source files.", ["Button action"], ["REL_index.html", "REL_index.css"]);
   add("top.resetLayout", "Reset Layout", "Resets panel widths to defaults.", ["Button action"], ["Reset left/right panel widths"]);
+  add("top.openMenu", "Open Menu", "Opens the compact top menu with project and library controls.", ["Button action"], ["Open header menu"]);
+  add("top.closeMenu", "Close Menu", "Closes the compact top menu panel.", ["Button action"], ["Close header menu"]);
   add(
     "top.previewBreakpoint",
     "Preview Breakpoint",

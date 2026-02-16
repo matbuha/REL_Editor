@@ -25,7 +25,9 @@ coverage/
 # Editor generated output
 # =========================
 **/rel_editor/
+**/rel_editor/*
 **/rel_assets/
+**/rel_assets/*
 **/REL_*.html
 **/REL_*.css
 !REL_EDITOR/

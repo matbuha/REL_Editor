@@ -368,6 +368,9 @@
       moveHandler: null,
       upHandler: null,
     },
+    menu: {
+      open: false,
+    },
     tooltip: {
       devCheckTimer: 0,
       warnedMissing: new Set(),
@@ -467,6 +470,10 @@
   };
 
   const dom = {
+    menuToggleBtn: document.getElementById("hamburgerMenuBtn"),
+    menuCloseBtn: document.getElementById("hamburgerMenuCloseBtn"),
+    menuPanel: document.getElementById("hamburgerMenuPanel"),
+    menuBackdrop: document.getElementById("hamburgerMenuBackdrop"),
     layoutRoot: document.getElementById("layoutRoot"),
     leftResizer: document.getElementById("leftResizer"),
     rightResizer: document.getElementById("rightResizer"),
@@ -599,6 +606,8 @@
 
   function applyStaticTooltipKeys() {
     const staticMappings = [
+      [dom.menuToggleBtn, "top.openMenu"],
+      [dom.menuCloseBtn, "top.closeMenu"],
       [dom.projectRootInput, "top.projectRoot"],
       [dom.projectTypeSelect, "top.projectType"],
       [dom.indexPathInput, "top.indexPath"],
@@ -834,7 +843,7 @@
     state.preview.activeBreakpoint = active;
     if (dom.previewBreakpointSelect) {
       dom.previewBreakpointSelect.value = active;
-      dom.previewBreakpointSelect.dataset.tooltipExtra = "Preview only. Does not change your project unless you edit styles in this mode.";
+      dom.previewBreakpointSelect.dataset.tooltipExtra = "Preview only. Does not change your project unless you edit styles in this mode.|Edit mode blocks link navigation. Hold Alt to interact.";
     }
 
     const supportsCustomWidth = active !== BREAKPOINT_DESKTOP;
@@ -912,7 +921,7 @@
     }
 
     if (opts.fromUi && previous !== next) {
-      setStatus(`Preview mode: ${getBreakpointLabel(next)}`);
+      scheduleTooltipCoverageCheck();
     }
   }
 
@@ -2188,6 +2197,30 @@
       syncProjectTypeUi();
     });
 
+    if (dom.menuToggleBtn) {
+      dom.menuToggleBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleHamburgerMenu();
+      });
+    }
+
+    if (dom.menuCloseBtn) {
+      dom.menuCloseBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setHamburgerMenuOpen(false);
+      });
+    }
+
+    if (dom.menuBackdrop) {
+      dom.menuBackdrop.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setHamburgerMenuOpen(false);
+      });
+    }
+
     dom.startDevServerBtn.addEventListener("click", async () => {
       await startViteDevServer();
     });
@@ -2373,8 +2406,38 @@
     });
   }
 
+  function toggleHamburgerMenu() {
+    setHamburgerMenuOpen(!state.menu.open);
+  }
+
+  function setHamburgerMenuOpen(open) {
+    const shouldOpen = Boolean(open);
+    state.menu.open = shouldOpen;
+    if (dom.menuPanel) {
+      dom.menuPanel.classList.toggle("hidden", !shouldOpen);
+      dom.menuPanel.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+    }
+    if (dom.menuBackdrop) {
+      dom.menuBackdrop.classList.toggle("hidden", !shouldOpen);
+      dom.menuBackdrop.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+    }
+    if (dom.menuToggleBtn) {
+      dom.menuToggleBtn.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+    }
+    if (shouldOpen) {
+      scheduleTooltipCoverageCheck();
+    }
+  }
+
   function onEditorKeyDown(event) {
     const key = event.key;
+    if (key === "Escape" && state.menu.open) {
+      event.preventDefault();
+      event.stopPropagation();
+      setHamburgerMenuOpen(false);
+      return;
+    }
+
     if (state.sectionLayout.visible) {
       if (key === "Escape") {
         event.preventDefault();
@@ -2430,6 +2493,14 @@
 
   function onEditorPointerDown(event) {
     const target = event.target;
+    if (state.menu.open) {
+      const inMenu = target instanceof Element
+        && (target.closest("#hamburgerMenuPanel") || target.closest("#hamburgerMenuBtn"));
+      if (!inMenu) {
+        setHamburgerMenuOpen(false);
+      }
+    }
+
     if (state.navigator.visible) {
       const inNavigator = target instanceof Element && target.closest(".rel-navigator-modal");
       if (!inNavigator) {

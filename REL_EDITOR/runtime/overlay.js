@@ -226,6 +226,7 @@
     selectedElement: null,
     idCounter: 1,
     editMode: true,
+    allowNativeInteractionUntil: 0,
     activeBreakpoint: BREAKPOINT_DESKTOP,
     styleBuckets: {
       base: {},
@@ -318,6 +319,8 @@
   ensureHoverInfoOverlay();
   scheduleEmptyPlaceholdersRefresh();
   document.addEventListener("click", onDocumentClick, true);
+  document.addEventListener("auxclick", onDocumentAuxClick, true);
+  document.addEventListener("submit", onDocumentSubmit, true);
   document.addEventListener("keydown", onDocumentKeyDown, true);
   document.addEventListener("contextmenu", onDocumentContextMenu, true);
   document.addEventListener("mousemove", onDocumentMouseMove, true);
@@ -338,12 +341,51 @@
   }
   postToEditor({ type: "REL_OVERLAY_READY" });
 
+  function resolveEventTargetElement(rawTarget) {
+    if (rawTarget instanceof Element) {
+      return rawTarget;
+    }
+    if (rawTarget && rawTarget.parentElement instanceof Element) {
+      return rawTarget.parentElement;
+    }
+    return null;
+  }
+
+  function isOverlayInteractionTarget(target) {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    if (target.closest("[data-rel-runtime]")) {
+      return true;
+    }
+    const classNode = target.closest("[class]");
+    if (!(classNode instanceof Element)) {
+      return false;
+    }
+    const classTokens = String(classNode.className || "")
+      .split(/\s+/)
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean);
+    return classTokens.some((token) => token.startsWith("rel-resize-") || token.startsWith("rel-snap-"));
+  }
+
+  function shouldAllowNativeInteraction(event, target) {
+    if (!state.editMode) {
+      return true;
+    }
+    if (event && event.altKey) {
+      state.allowNativeInteractionUntil = Date.now() + 1200;
+      return true;
+    }
+    return isOverlayInteractionTarget(target);
+  }
+
   function onDocumentClick(event) {
     if (!state.editMode) {
       return;
     }
 
-    const target = event.target;
+    const target = resolveEventTargetElement(event.target);
     if (!(target instanceof Element)) {
       return;
     }
@@ -352,7 +394,7 @@
       hidePreviewContextMenu();
     }
 
-    if (target.closest("[data-rel-runtime='overlay-ui'], [data-rel-runtime='inline-add-bar']")) {
+    if (shouldAllowNativeInteraction(event, target)) {
       return;
     }
 
@@ -360,6 +402,34 @@
     event.preventDefault();
     event.stopPropagation();
     selectElement(target);
+  }
+
+  function onDocumentAuxClick(event) {
+    if (!state.editMode) {
+      return;
+    }
+
+    const target = resolveEventTargetElement(event.target);
+    if (shouldAllowNativeInteraction(event, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onDocumentSubmit(event) {
+    if (!state.editMode) {
+      return;
+    }
+
+    const target = resolveEventTargetElement(event.target);
+    if (shouldAllowNativeInteraction(event, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   function onDocumentKeyDown(event) {
@@ -4699,22 +4769,12 @@
   function blockTopNavigation() {
     const originalOpen = window.open;
     window.open = function () {
-      if (state.editMode) {
+      const allowNativeInteraction = Date.now() <= Number(state.allowNativeInteractionUntil || 0);
+      if (state.editMode && !allowNativeInteraction) {
         return null;
       }
       return originalOpen.apply(window, arguments);
     };
-
-    document.addEventListener(
-      "submit",
-      (event) => {
-        if (state.editMode) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      },
-      true
-    );
   }
 
   function setupViteHeadObserver() {
