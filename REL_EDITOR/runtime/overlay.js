@@ -48,6 +48,8 @@
   const MANAGED_DROP_CLASS = "rel-editor-drop-target";
   const RESIZER_SELECTION_EVENT = "rel-selection-change";
   const PROTECTED_TAGS = new Set(["HTML", "HEAD", "BODY"]);
+  const INTERACTION_MODE_EDIT = "edit";
+  const INTERACTION_MODE_VIEW = "view";
   const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV", "SECTION"]);
   const IS_VITE_PROXY_MODE = String(window.location.pathname || "").startsWith("/vite-proxy");
   const VITE_GLOBAL_STYLE_PROPS = ["background", "background-color", "background-image", "color"];
@@ -226,6 +228,7 @@
     selectedElement: null,
     idCounter: 1,
     editMode: true,
+    interactionMode: INTERACTION_MODE_EDIT,
     allowNativeInteractionUntil: 0,
     activeBreakpoint: BREAKPOINT_DESKTOP,
     styleBuckets: {
@@ -378,6 +381,42 @@
       return true;
     }
     return isOverlayInteractionTarget(target);
+  }
+
+  function normalizeInteractionMode(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === INTERACTION_MODE_VIEW) {
+      return INTERACTION_MODE_VIEW;
+    }
+    return INTERACTION_MODE_EDIT;
+  }
+
+  function setInteractionMode(mode) {
+    const nextMode = normalizeInteractionMode(mode);
+    const nextEditMode = nextMode === INTERACTION_MODE_EDIT;
+    const previousEditMode = Boolean(state.editMode);
+    state.interactionMode = nextMode;
+    state.editMode = nextEditMode;
+
+    if (nextEditMode) {
+      if (!previousEditMode) {
+        scheduleEmptyPlaceholdersRefresh();
+      }
+      return;
+    }
+
+    const hadSelection = Boolean(state.selectedElement);
+    state.pendingDragNodeTemplate = null;
+    clearDragDropIndicator();
+    hideInlineAddBar();
+    hidePreviewContextMenu();
+    hideQuickActionsToolbar({ force: true });
+    scheduleHoverInfoForElement(null);
+    hideHoverInfo();
+    clearSelection();
+    if (hadSelection) {
+      postToEditor({ type: "REL_SELECTION_CLEARED" });
+    }
   }
 
   function onDocumentClick(event) {
@@ -2277,6 +2316,12 @@
       return;
     }
 
+    if (message.type === "REL_SET_INTERACTION_MODE") {
+      const payload = message.payload || {};
+      setInteractionMode(payload.mode);
+      return;
+    }
+
     if (message.type === "REL_SET_ATTRIBUTES") {
       const payload = message.payload || {};
       applyAttributes(payload.relId, payload.attributes || {});
@@ -2341,6 +2386,9 @@
     }
 
     if (message.type === "REL_SELECT_BY_REL_ID") {
+      if (!state.editMode) {
+        return;
+      }
       const relId = message.payload && message.payload.relId;
       const source = message.payload && message.payload.source;
       if (!relId) {

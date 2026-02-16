@@ -8,14 +8,17 @@
 </head>
 <body>
   <header class="app-header">
-    <label id="previewBreakpointRow" class="header-preview-control">
-      Preview
-      <select id="previewBreakpointSelect">
-        <option value="desktop">Desktop</option>
-        <option value="tablet">Tablet</option>
-        <option value="mobile">Mobile</option>
-      </select>
-    </label>
+    <div class="header-preview-group">
+      <label id="previewBreakpointRow" class="header-preview-control">
+        Preview
+        <select id="previewBreakpointSelect">
+          <option value="desktop">Desktop</option>
+          <option value="tablet">Tablet</option>
+          <option value="mobile">Mobile</option>
+        </select>
+      </label>
+      <button id="interactionModeToggleBtn" class="interaction-toggle-btn" type="button" aria-pressed="false">Edit</button>
+    </div>
     <button id="hamburgerMenuBtn" class="hamburger-btn" type="button" aria-label="Open menu" aria-haspopup="true" aria-expanded="false">Menu</button>
   </header>
   <div id="hamburgerMenuBackdrop" class="topbar-menu-backdrop hidden" aria-hidden="true"></div>
@@ -24,6 +27,17 @@
       <div class="brand">REL_EDITOR</div>
       <button id="hamburgerMenuCloseBtn" type="button">Close</button>
     </div>
+
+    <section class="topbar-menu-section">
+      <h3>Appearance</h3>
+      <div class="menu-theme-row">
+        <label class="menu-theme-label">
+          Theme Color
+          <input id="uiThemeColorInput" class="menu-theme-color-input" type="color" value="#f4efe7">
+        </label>
+        <button id="uiThemeResetBtn" type="button">Reset theme</button>
+      </div>
+    </section>
 
     <section class="topbar-menu-section">
       <h3>Project</h3>

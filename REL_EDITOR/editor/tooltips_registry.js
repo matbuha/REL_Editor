@@ -35,8 +35,23 @@
   add("top.savePatch", "Save Patch", "Writes patch.json and override.css under rel_editor.", ["Button action"], ["rel_editor/patch.json"]);
   add("top.exportSafe", "Export Safe", "Exports REL_* files without touching source files.", ["Button action"], ["REL_index.html", "REL_index.css"]);
   add("top.resetLayout", "Reset Layout", "Resets panel widths to defaults.", ["Button action"], ["Reset left/right panel widths"]);
+  add(
+    "top.interactionMode",
+    "Interaction Mode",
+    "Toggles between Edit mode (design interactions) and View mode (normal page behavior).",
+    ["Edit / View"],
+    ["Edit", "View"]
+  );
   add("top.openMenu", "Open Menu", "Opens the compact top menu with project and library controls.", ["Button action"], ["Open header menu"]);
   add("top.closeMenu", "Close Menu", "Closes the compact top menu panel.", ["Button action"], ["Close header menu"]);
+  add(
+    "top.uiThemeColor",
+    "Theme Color",
+    "Change editor UI color. Text color adjusts automatically for readability.",
+    ["Hex color"],
+    ["#f4efe7", "#1e293b"]
+  );
+  add("top.uiThemeReset", "Reset theme", "Reset editor UI theme color.", ["Button action"], ["Reset to default"]);
   add(
     "top.previewBreakpoint",
     "Preview Breakpoint",

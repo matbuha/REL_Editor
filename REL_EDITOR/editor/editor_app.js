@@ -247,6 +247,10 @@
     "background-repeat",
   ]);
   const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
+  const UI_THEME_COLOR_STORAGE_KEY = "rel_editor_ui_theme_color";
+  const DEFAULT_UI_THEME_COLOR = "#f4efe7";
+  const INTERACTION_MODE_EDIT = "edit";
+  const INTERACTION_MODE_VIEW = "view";
   const LEFT_MIN_PX = 200;
   const RIGHT_MIN_PX = 260;
   const CENTER_MIN_PX = 320;
@@ -343,6 +347,8 @@
     deletedNodes: [],
     movedNodes: [],
     copiedStyles: null,
+    interactionMode: INTERACTION_MODE_EDIT,
+    uiThemeColor: DEFAULT_UI_THEME_COLOR,
     preview: {
       activeBreakpoint: BREAKPOINT_DESKTOP,
       customWidths: {
@@ -470,10 +476,13 @@
   };
 
   const dom = {
+    interactionModeToggleBtn: document.getElementById("interactionModeToggleBtn"),
     menuToggleBtn: document.getElementById("hamburgerMenuBtn"),
     menuCloseBtn: document.getElementById("hamburgerMenuCloseBtn"),
     menuPanel: document.getElementById("hamburgerMenuPanel"),
     menuBackdrop: document.getElementById("hamburgerMenuBackdrop"),
+    uiThemeColorInput: document.getElementById("uiThemeColorInput"),
+    uiThemeResetBtn: document.getElementById("uiThemeResetBtn"),
     layoutRoot: document.getElementById("layoutRoot"),
     leftResizer: document.getElementById("leftResizer"),
     rightResizer: document.getElementById("rightResizer"),
@@ -576,6 +585,9 @@
     buildStyleControls();
     buildThemeManagerUi();
     setupTooltipSystem();
+    loadUiThemeColorFromStorage();
+    applyUiThemeColor(state.uiThemeColor, { persist: false });
+    syncInteractionModeUi();
     clearSelectionUi();
     bindEvents();
     initResizableLayout();
@@ -606,8 +618,11 @@
 
   function applyStaticTooltipKeys() {
     const staticMappings = [
+      [dom.interactionModeToggleBtn, "top.interactionMode"],
       [dom.menuToggleBtn, "top.openMenu"],
       [dom.menuCloseBtn, "top.closeMenu"],
+      [dom.uiThemeColorInput, "top.uiThemeColor"],
+      [dom.uiThemeResetBtn, "top.uiThemeReset"],
       [dom.projectRootInput, "top.projectRoot"],
       [dom.projectTypeSelect, "top.projectType"],
       [dom.indexPathInput, "top.indexPath"],
@@ -686,6 +701,104 @@
       return;
     }
     element.setAttribute("data-tooltip-key", safeKey);
+  }
+
+  function normalizeInteractionMode(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === INTERACTION_MODE_VIEW) {
+      return INTERACTION_MODE_VIEW;
+    }
+    return INTERACTION_MODE_EDIT;
+  }
+
+  function isInteractionEditMode() {
+    return normalizeInteractionMode(state.interactionMode) === INTERACTION_MODE_EDIT;
+  }
+
+  function ensureInteractionModeTabState(mode) {
+    const normalizedMode = normalizeInteractionMode(mode);
+    if (normalizedMode !== INTERACTION_MODE_VIEW) {
+      return;
+    }
+    const activeBtn = document.querySelector(".tab-btn.active");
+    if (!(activeBtn instanceof HTMLElement)) {
+      return;
+    }
+    const activeTab = String(activeBtn.dataset.tab || "").trim().toLowerCase();
+    if (activeTab !== "add" && activeTab !== "theme") {
+      return;
+    }
+    const infoBtn = document.querySelector('.tab-btn[data-tab="information"]');
+    if (infoBtn instanceof HTMLButtonElement) {
+      infoBtn.click();
+    }
+  }
+
+  function syncInteractionModeUi() {
+    const mode = normalizeInteractionMode(state.interactionMode);
+    state.interactionMode = mode;
+    const isView = mode === INTERACTION_MODE_VIEW;
+    document.body.classList.toggle("interaction-view", isView);
+    document.body.classList.toggle("interaction-edit", !isView);
+
+    if (dom.interactionModeToggleBtn) {
+      dom.interactionModeToggleBtn.textContent = isView ? "View" : "Edit";
+      dom.interactionModeToggleBtn.dataset.mode = mode;
+      dom.interactionModeToggleBtn.setAttribute("aria-pressed", isView ? "true" : "false");
+      dom.interactionModeToggleBtn.dataset.tooltipExtra = isView
+        ? "View mode: interact with the page normally. Editor UI is hidden except Information and Tree."
+        : "Edit mode: select elements, drag, resize, change styles. Links do not navigate.";
+    }
+
+    ensureInteractionModeTabState(mode);
+  }
+
+  function sendInteractionModeToOverlay() {
+    if (!state.overlayReady) {
+      return;
+    }
+    sendToOverlay({
+      type: "REL_SET_INTERACTION_MODE",
+      payload: {
+        mode: state.interactionMode,
+      },
+    });
+  }
+
+  function setInteractionMode(mode, options) {
+    const nextMode = normalizeInteractionMode(mode);
+    const opts = options && typeof options === "object" ? options : {};
+    const previousMode = normalizeInteractionMode(state.interactionMode);
+    state.interactionMode = nextMode;
+    syncInteractionModeUi();
+
+    if (nextMode === INTERACTION_MODE_VIEW) {
+      state.selectedRelId = null;
+      state.lastSelection = null;
+      if (state.sectionLayout.visible) {
+        closeSectionLayoutModal();
+      }
+      if (state.navigator.visible) {
+        closeNavigatorOverlay();
+      }
+      clearTreeDropIndicator();
+      clearTreeDragState();
+      hideTreeContextMenu();
+      clearSelectionUi();
+    }
+
+    if (!opts.skipOverlay) {
+      sendInteractionModeToOverlay();
+    }
+
+    if (opts.fromUser && previousMode !== nextMode) {
+      setStatus(
+        nextMode === INTERACTION_MODE_VIEW
+          ? "View mode active"
+          : "Edit mode active"
+      );
+    }
+    scheduleTooltipCoverageCheck();
   }
 
   function resolveStyleTooltipKey(property) {
@@ -843,7 +956,7 @@
     state.preview.activeBreakpoint = active;
     if (dom.previewBreakpointSelect) {
       dom.previewBreakpointSelect.value = active;
-      dom.previewBreakpointSelect.dataset.tooltipExtra = "Preview only. Does not change your project unless you edit styles in this mode.|Edit mode blocks link navigation. Hold Alt to interact.";
+      dom.previewBreakpointSelect.dataset.tooltipExtra = "Preview only. Does not change your project unless you edit styles in this mode.";
     }
 
     const supportsCustomWidth = active !== BREAKPOINT_DESKTOP;
@@ -965,6 +1078,10 @@
     });
 
     dom.treeContainer.addEventListener("contextmenu", (event) => {
+      if (!isInteractionEditMode()) {
+        hideTreeContextMenu();
+        return;
+      }
       const target = event.target;
       const item = resolveTreeItemFromContextTarget(target);
       if (!item) {
@@ -1053,6 +1170,10 @@
   }
 
   function openTreeContextMenu(item, clientX, clientY) {
+    if (!isInteractionEditMode()) {
+      hideTreeContextMenu();
+      return;
+    }
     const safeItem = item && typeof item === "object" ? item : null;
     if (!safeItem || !safeItem.relId) {
       hideTreeContextMenu();
@@ -1179,6 +1300,9 @@
   }
 
   function applyTreeContextAction(actionName, forcedRelId) {
+    if (!isInteractionEditMode()) {
+      return;
+    }
     const action = String(actionName || "").trim().toLowerCase();
     const relId = String(forcedRelId || state.treeContextMenu.targetRelId || "").trim();
     if (!action || !relId) {
@@ -2091,6 +2215,9 @@
   }
 
   function selectNavigatorResultByIndex(index) {
+    if (!isInteractionEditMode()) {
+      return false;
+    }
     const numericIndex = Number(index);
     if (!Number.isFinite(numericIndex)) {
       return false;
@@ -2197,11 +2324,30 @@
       syncProjectTypeUi();
     });
 
+    if (dom.interactionModeToggleBtn) {
+      dom.interactionModeToggleBtn.addEventListener("click", () => {
+        const nextMode = isInteractionEditMode() ? INTERACTION_MODE_VIEW : INTERACTION_MODE_EDIT;
+        setInteractionMode(nextMode, { fromUser: true });
+      });
+    }
+
     if (dom.menuToggleBtn) {
       dom.menuToggleBtn.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         toggleHamburgerMenu();
+      });
+    }
+
+    if (dom.uiThemeColorInput) {
+      dom.uiThemeColorInput.addEventListener("input", () => {
+        applyUiThemeColor(dom.uiThemeColorInput.value, { persist: true });
+      });
+    }
+
+    if (dom.uiThemeResetBtn) {
+      dom.uiThemeResetBtn.addEventListener("click", () => {
+        applyUiThemeColor(DEFAULT_UI_THEME_COLOR, { persist: true });
       });
     }
 
@@ -2438,6 +2584,10 @@
       return;
     }
 
+    if (!isInteractionEditMode()) {
+      return;
+    }
+
     if (state.sectionLayout.visible) {
       if (key === "Escape") {
         event.preventDefault();
@@ -2518,6 +2668,9 @@
   }
 
   function requestDeleteSelected(source) {
+    if (!isInteractionEditMode()) {
+      return;
+    }
     if (!state.selectedRelId) {
       return;
     }
@@ -5357,6 +5510,7 @@
     const msg = event.data || {};
     if (msg.type === "REL_OVERLAY_READY") {
       state.overlayReady = true;
+      sendInteractionModeToOverlay();
       applyPatchToOverlay();
       requestTreeSnapshot();
       logVite("Overlay reported ready");
@@ -5365,6 +5519,9 @@
     }
 
     if (msg.type === "REL_SELECTION") {
+      if (!isInteractionEditMode()) {
+        return;
+      }
       handleSelection(msg.payload);
       return;
     }
@@ -5968,6 +6125,9 @@
   }
 
   function applyStyle(property, value) {
+    if (!isInteractionEditMode()) {
+      return;
+    }
     if (!state.selectedRelId) {
       return;
     }
@@ -6120,6 +6280,9 @@
   }
 
   function applyAttributeEdit(field, rawValue) {
+    if (!isInteractionEditMode()) {
+      return;
+    }
     if (!state.selectedRelId) {
       return;
     }
@@ -6153,6 +6316,9 @@
   }
 
   function applyLinkSettingsFromPanel() {
+    if (!isInteractionEditMode()) {
+      return;
+    }
     if (!state.selectedRelId || !state.lastSelection) {
       return;
     }
@@ -6202,6 +6368,9 @@
   }
 
   function applyTextOverrideFromPanel() {
+    if (!isInteractionEditMode()) {
+      return;
+    }
     if (!state.selectedRelId || !state.lastSelection) {
       return;
     }
@@ -6620,6 +6789,9 @@
     setTooltipKey(btn, "tree.node");
     btn.dataset.tooltipExtra = `rel-id: ${item.relId}`;
     btn.addEventListener("click", () => {
+      if (!isInteractionEditMode()) {
+        return;
+      }
       sendToOverlay({
         type: "REL_SELECT_BY_REL_ID",
         payload: { relId: item.relId },
@@ -6627,7 +6799,7 @@
     });
     row.appendChild(btn);
 
-    if (item.canDrag) {
+    if (item.canDrag && isInteractionEditMode()) {
       row.draggable = true;
       row.addEventListener("dragstart", (event) => {
         onTreeRowDragStart(event, item, row);
@@ -6693,6 +6865,10 @@
   }
 
   function onTreeRowDragStart(event, item, row) {
+    if (!isInteractionEditMode()) {
+      event.preventDefault();
+      return;
+    }
     if (!item || !item.canDrag) {
       event.preventDefault();
       return;
@@ -6717,6 +6893,9 @@
   }
 
   function onTreeRowDragOver(event, item, row) {
+    if (!isInteractionEditMode()) {
+      return;
+    }
     if (!state.treeUi.dragging || !state.treeUi.dragSourceRelId) {
       return;
     }
@@ -6736,6 +6915,9 @@
   }
 
   function onTreeRowDrop(event, item, row) {
+    if (!isInteractionEditMode()) {
+      return;
+    }
     if (!state.treeUi.dragging || !state.treeUi.dragSourceRelId) {
       return;
     }
@@ -6976,6 +7158,7 @@
     if (!state.overlayReady) {
       return;
     }
+    sendInteractionModeToOverlay();
 
     sendToOverlay({
       type: "REL_APPLY_PATCH",
@@ -8381,6 +8564,93 @@
         rightPx: state.layout.rightPx,
       })
     );
+  }
+
+  function loadUiThemeColorFromStorage() {
+    try {
+      const raw = localStorage.getItem(UI_THEME_COLOR_STORAGE_KEY);
+      if (!raw) {
+        state.uiThemeColor = DEFAULT_UI_THEME_COLOR;
+        return;
+      }
+      state.uiThemeColor = normalizeHexColor(raw, DEFAULT_UI_THEME_COLOR);
+    } catch {
+      state.uiThemeColor = DEFAULT_UI_THEME_COLOR;
+    }
+  }
+
+  function persistUiThemeColorToStorage(color) {
+    try {
+      localStorage.setItem(UI_THEME_COLOR_STORAGE_KEY, color);
+    } catch {
+      // Ignore storage write errors in restricted contexts.
+    }
+  }
+
+  function normalizeHexColor(value, fallback) {
+    const raw = String(value || "").trim();
+    const fallbackHex = String(fallback || DEFAULT_UI_THEME_COLOR).trim().toLowerCase();
+    const compact = raw.startsWith("#") ? raw.slice(1) : raw;
+    if (/^[0-9a-fA-F]{6}$/.test(compact)) {
+      return `#${compact.toLowerCase()}`;
+    }
+    if (/^[0-9a-fA-F]{3}$/.test(compact)) {
+      const expanded = compact
+        .split("")
+        .map((char) => `${char}${char}`)
+        .join("");
+      return `#${expanded.toLowerCase()}`;
+    }
+    return fallbackHex;
+  }
+
+  function parseHexColor(hex) {
+    const normalized = normalizeHexColor(hex, DEFAULT_UI_THEME_COLOR).slice(1);
+    return {
+      r: parseInt(normalized.slice(0, 2), 16),
+      g: parseInt(normalized.slice(2, 4), 16),
+      b: parseInt(normalized.slice(4, 6), 16),
+    };
+  }
+
+  function toLinearSrgbChannel(channel) {
+    const value = clamp(Number(channel) / 255, 0, 1);
+    if (value <= 0.04045) {
+      return value / 12.92;
+    }
+    return ((value + 0.055) / 1.055) ** 2.4;
+  }
+
+  function computeRelativeLuminance(rgb) {
+    const safeRgb = rgb && typeof rgb === "object" ? rgb : { r: 244, g: 239, b: 231 };
+    const r = toLinearSrgbChannel(safeRgb.r);
+    const g = toLinearSrgbChannel(safeRgb.g);
+    const b = toLinearSrgbChannel(safeRgb.b);
+    return (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+  }
+
+  function applyUiThemeColor(value, options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const safeHex = normalizeHexColor(value, DEFAULT_UI_THEME_COLOR);
+    const rgb = parseHexColor(safeHex);
+    const luminance = computeRelativeLuminance(rgb);
+    const fgHex = luminance > 0.5 ? "#111111" : "#ffffff";
+    const fgRgb = parseHexColor(fgHex);
+    const borderColor = `rgba(${fgRgb.r}, ${fgRgb.g}, ${fgRgb.b}, 0.26)`;
+    const mutedColor = `rgba(${fgRgb.r}, ${fgRgb.g}, ${fgRgb.b}, 0.72)`;
+
+    document.documentElement.style.setProperty("--rel-ui-bg", safeHex);
+    document.documentElement.style.setProperty("--rel-ui-fg", fgHex);
+    document.documentElement.style.setProperty("--rel-ui-border", borderColor);
+    document.documentElement.style.setProperty("--rel-ui-muted", mutedColor);
+
+    state.uiThemeColor = safeHex;
+    if (dom.uiThemeColorInput && dom.uiThemeColorInput.value !== safeHex) {
+      dom.uiThemeColorInput.value = safeHex;
+    }
+    if (opts.persist !== false) {
+      persistUiThemeColorToStorage(safeHex);
+    }
   }
 
   function resetLayoutWidths(save) {
