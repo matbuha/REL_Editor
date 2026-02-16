@@ -249,6 +249,7 @@
   const LAYOUT_STORAGE_KEY = "rel-editor-layout-v1";
   const UI_THEME_COLOR_STORAGE_KEY = "rel_editor_ui_theme_color";
   const DEFAULT_UI_THEME_COLOR = "#f4efe7";
+  const DRAG_COMPONENT_MIME_TYPE = "application/x-rel-editor";
   const INTERACTION_MODE_EDIT = "edit";
   const INTERACTION_MODE_VIEW = "view";
   const LEFT_MIN_PX = 200;
@@ -751,6 +752,10 @@
     }
 
     ensureInteractionModeTabState(mode);
+    buildAddPanel();
+    if (Array.isArray(state.lastTreeSnapshot) && state.lastTreeSnapshot.length > 0) {
+      renderTree(state.lastTreeSnapshot, state.treeUi.query || "");
+    }
   }
 
   function sendInteractionModeToOverlay() {
@@ -770,6 +775,7 @@
     const opts = options && typeof options === "object" ? options : {};
     const previousMode = normalizeInteractionMode(state.interactionMode);
     state.interactionMode = nextMode;
+    document.body.classList.remove("is-dragging-component");
     syncInteractionModeUi();
 
     if (nextMode === INTERACTION_MODE_VIEW) {
@@ -4626,7 +4632,7 @@
       const item = document.createElement("button");
       item.type = "button";
       item.className = "add-item";
-      item.draggable = true;
+      item.draggable = isInteractionEditMode();
       item.setAttribute("data-component-type", component.type);
       setTooltipKey(item, markExternal ? "add.external" : `add.${component.type}`);
 
@@ -4650,10 +4656,30 @@
 
       let dragging = false;
       item.addEventListener("dragstart", (event) => {
+        if (!isInteractionEditMode()) {
+          event.preventDefault();
+          return;
+        }
         dragging = true;
         const nodeTemplate = createNodeTemplate(component);
-        event.dataTransfer.effectAllowed = "copy";
-        event.dataTransfer.setData("text/plain", component.type);
+        document.body.classList.add("is-dragging-component");
+        if (event.dataTransfer) {
+          const dragPayload = JSON.stringify({
+            source: "add-panel",
+            nodeTemplate,
+          });
+          event.dataTransfer.effectAllowed = "copy";
+          try {
+            event.dataTransfer.setData("text/plain", component.type);
+          } catch {
+            // Ignore browser-specific dataTransfer restrictions.
+          }
+          try {
+            event.dataTransfer.setData(DRAG_COMPONENT_MIME_TYPE, dragPayload);
+          } catch {
+            // Ignore browser-specific dataTransfer restrictions.
+          }
+        }
         sendToOverlay({
           type: "REL_SET_DRAG_COMPONENT",
           payload: { nodeTemplate },
@@ -4662,6 +4688,7 @@
       });
 
       item.addEventListener("dragend", () => {
+        document.body.classList.remove("is-dragging-component");
         sendToOverlay({ type: "REL_CLEAR_DRAG_COMPONENT" });
         window.setTimeout(() => {
           dragging = false;
@@ -4669,6 +4696,9 @@
       });
 
       item.addEventListener("click", () => {
+        if (!isInteractionEditMode()) {
+          return;
+        }
         if (dragging) {
           return;
         }
@@ -8613,6 +8643,38 @@
     };
   }
 
+  function formatRgbColor(rgb) {
+    const safeRgb = rgb && typeof rgb === "object" ? rgb : { r: 0, g: 0, b: 0 };
+    const r = Math.round(clamp(Number(safeRgb.r), 0, 255));
+    const g = Math.round(clamp(Number(safeRgb.g), 0, 255));
+    const b = Math.round(clamp(Number(safeRgb.b), 0, 255));
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+
+  function formatRgbaColor(rgb, alpha) {
+    const safeRgb = rgb && typeof rgb === "object" ? rgb : { r: 0, g: 0, b: 0 };
+    const r = Math.round(clamp(Number(safeRgb.r), 0, 255));
+    const g = Math.round(clamp(Number(safeRgb.g), 0, 255));
+    const b = Math.round(clamp(Number(safeRgb.b), 0, 255));
+    const safeAlpha = clamp(Number(alpha), 0, 1);
+    return `rgba(${r}, ${g}, ${b}, ${formatAlphaValue(safeAlpha)})`;
+  }
+
+  function blendRgbColor(base, target, ratio) {
+    const safeBase = base && typeof base === "object" ? base : { r: 0, g: 0, b: 0 };
+    const safeTarget = target && typeof target === "object" ? target : safeBase;
+    const mixRatio = clamp(Number(ratio), 0, 1);
+    return {
+      r: safeBase.r + ((safeTarget.r - safeBase.r) * mixRatio),
+      g: safeBase.g + ((safeTarget.g - safeBase.g) * mixRatio),
+      b: safeBase.b + ((safeTarget.b - safeBase.b) * mixRatio),
+    };
+  }
+
+  function resolveUiThemeRoot() {
+    return document.body instanceof HTMLElement ? document.body : document.documentElement;
+  }
+
   function toLinearSrgbChannel(channel) {
     const value = clamp(Number(channel) / 255, 0, 1);
     if (value <= 0.04045) {
@@ -8634,15 +8696,39 @@
     const safeHex = normalizeHexColor(value, DEFAULT_UI_THEME_COLOR);
     const rgb = parseHexColor(safeHex);
     const luminance = computeRelativeLuminance(rgb);
-    const fgHex = luminance > 0.5 ? "#111111" : "#ffffff";
+    const fgHex = luminance > 0.5 ? "#111111" : "#f5f5f5";
     const fgRgb = parseHexColor(fgHex);
-    const borderColor = `rgba(${fgRgb.r}, ${fgRgb.g}, ${fgRgb.b}, 0.26)`;
-    const mutedColor = `rgba(${fgRgb.r}, ${fgRgb.g}, ${fgRgb.b}, 0.72)`;
+    const borderColor = formatRgbaColor(fgRgb, 0.2);
+    const mutedColor = formatRgbaColor(fgRgb, 0.75);
+    const surfaceColor = formatRgbColor(blendRgbColor(rgb, fgRgb, luminance > 0.5 ? 0.06 : 0.14));
+    const surface2Color = formatRgbColor(blendRgbColor(rgb, fgRgb, luminance > 0.5 ? 0.14 : 0.24));
+    const accentHex = luminance > 0.5 ? "#cc5f2f" : "#ff9b63";
+    const accentRgb = parseHexColor(accentHex);
+    const accentFgHex = computeRelativeLuminance(accentRgb) > 0.45 ? "#111111" : "#f5f5f5";
+    const focusColor = formatRgbaColor(accentRgb, 0.42);
+    const shadowColor = formatRgbaColor(luminance > 0.5 ? { r: 31, g: 22, b: 14 } : { r: 0, g: 0, b: 0 }, luminance > 0.5 ? 0.22 : 0.48);
+    const uiShadow = `0 16px 36px ${shadowColor}`;
+    const statusOk = luminance > 0.5 ? "#1f6d3f" : "#97f7ba";
+    const statusError = luminance > 0.5 ? "#a32b2b" : "#ffb7b7";
+    const themeRoot = resolveUiThemeRoot();
 
-    document.documentElement.style.setProperty("--rel-ui-bg", safeHex);
-    document.documentElement.style.setProperty("--rel-ui-fg", fgHex);
-    document.documentElement.style.setProperty("--rel-ui-border", borderColor);
-    document.documentElement.style.setProperty("--rel-ui-muted", mutedColor);
+    themeRoot.style.setProperty("--ui-bg", safeHex);
+    themeRoot.style.setProperty("--ui-fg", fgHex);
+    themeRoot.style.setProperty("--ui-muted", mutedColor);
+    themeRoot.style.setProperty("--ui-border", borderColor);
+    themeRoot.style.setProperty("--ui-surface", surfaceColor);
+    themeRoot.style.setProperty("--ui-surface-2", surface2Color);
+    themeRoot.style.setProperty("--ui-accent", accentHex);
+    themeRoot.style.setProperty("--ui-accent-fg", accentFgHex);
+    themeRoot.style.setProperty("--ui-focus", focusColor);
+    themeRoot.style.setProperty("--ui-shadow", uiShadow);
+    themeRoot.style.setProperty("--rel-ui-bg", safeHex);
+    themeRoot.style.setProperty("--rel-ui-fg", fgHex);
+    themeRoot.style.setProperty("--rel-ui-border", borderColor);
+    themeRoot.style.setProperty("--rel-ui-muted", mutedColor);
+    themeRoot.style.setProperty("--rel-ui-input-bg", surface2Color);
+    themeRoot.style.setProperty("--rel-ui-status-ok", statusOk);
+    themeRoot.style.setProperty("--rel-ui-status-error", statusError);
 
     state.uiThemeColor = safeHex;
     if (dom.uiThemeColorInput && dom.uiThemeColorInput.value !== safeHex) {
@@ -8730,6 +8816,6 @@
 
   function setStatus(message, isError) {
     dom.statusText.textContent = message;
-    dom.statusText.style.color = isError ? "#a32b2b" : "#786a5b";
+    dom.statusText.classList.toggle("error", Boolean(isError));
   }
 })();

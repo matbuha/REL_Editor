@@ -50,6 +50,31 @@
   const PROTECTED_TAGS = new Set(["HTML", "HEAD", "BODY"]);
   const INTERACTION_MODE_EDIT = "edit";
   const INTERACTION_MODE_VIEW = "view";
+  const DRAG_COMPONENT_MIME_TYPE = "application/x-rel-editor";
+  const DRAG_COMPONENT_TEXT_FALLBACK_TYPE = "text/plain";
+  const DRAG_COMPONENT_ALLOWED_TYPES = new Set([
+    "section",
+    "container",
+    "heading-h1",
+    "heading-h2",
+    "heading-h3",
+    "paragraph",
+    "button",
+    "image",
+    "link",
+    "card",
+    "spacer",
+    "divider",
+    "bootstrap-card",
+    "bootstrap-button",
+    "bootstrap-grid",
+    "bootstrap-navbar",
+    "bulma-button",
+    "bulma-card",
+    "pico-button",
+    "pico-link",
+    "raw-html",
+  ]);
   const TEXT_EDIT_TAGS = new Set(["A", "BUTTON", "P", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN", "LABEL", "LI", "DIV", "SECTION"]);
   const IS_VITE_PROXY_MODE = String(window.location.pathname || "").startsWith("/vite-proxy");
   const VITE_GLOBAL_STYLE_PROPS = ["background", "background-color", "background-image", "color"];
@@ -321,6 +346,8 @@
   ensureResizerModuleLoaded();
   ensureHoverInfoOverlay();
   scheduleEmptyPlaceholdersRefresh();
+  document.addEventListener("pointerdown", onDocumentPointerDown, true);
+  document.addEventListener("mousedown", onDocumentPointerDown, true);
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("auxclick", onDocumentAuxClick, true);
   document.addEventListener("submit", onDocumentSubmit, true);
@@ -381,6 +408,77 @@
       return true;
     }
     return isOverlayInteractionTarget(target);
+  }
+
+  function isInteractivePreviewElement(target) {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    return Boolean(
+      target.closest(
+        "a, button, input, select, textarea, label, form, [role=\"button\"], [contenteditable=\"true\"]"
+      )
+    );
+  }
+
+  function sanitizeDragNodeTemplate(rawTemplate) {
+    const template = rawTemplate && typeof rawTemplate === "object" ? rawTemplate : null;
+    if (!template) {
+      return null;
+    }
+
+    const type = String(template.type || "").trim().toLowerCase();
+    if (!type || !DRAG_COMPONENT_ALLOWED_TYPES.has(type)) {
+      return null;
+    }
+
+    const rawProps = template.props && typeof template.props === "object" ? template.props : {};
+    return {
+      nodeId: String(template.nodeId || "").trim() || generateNodeId(),
+      relId: String(template.relId || "").trim() || generateRelId(),
+      type,
+      props: { ...rawProps },
+    };
+  }
+
+  function extractDragNodeTemplateFromDataTransfer(dataTransfer) {
+    if (!dataTransfer) {
+      return null;
+    }
+
+    let payloadText = "";
+    try {
+      payloadText = String(dataTransfer.getData(DRAG_COMPONENT_MIME_TYPE) || "").trim();
+    } catch {
+      payloadText = "";
+    }
+
+    if (payloadText) {
+      try {
+        const parsed = JSON.parse(payloadText);
+        const fromTemplate = sanitizeDragNodeTemplate(parsed && parsed.nodeTemplate);
+        if (fromTemplate) {
+          return fromTemplate;
+        }
+        const fromDirectPayload = sanitizeDragNodeTemplate(parsed);
+        if (fromDirectPayload) {
+          return fromDirectPayload;
+        }
+      } catch {
+        // Ignore malformed drag payloads from external sources.
+      }
+    }
+
+    let fallbackType = "";
+    try {
+      fallbackType = String(dataTransfer.getData(DRAG_COMPONENT_TEXT_FALLBACK_TYPE) || "").trim().toLowerCase();
+    } catch {
+      fallbackType = "";
+    }
+    if (!fallbackType || !DRAG_COMPONENT_ALLOWED_TYPES.has(fallbackType)) {
+      return null;
+    }
+    return sanitizeDragNodeTemplate({ type: fallbackType, props: {} });
   }
 
   function normalizeInteractionMode(value) {
@@ -463,6 +561,29 @@
     }
 
     const target = resolveEventTargetElement(event.target);
+    if (shouldAllowNativeInteraction(event, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onDocumentPointerDown(event) {
+    if (!state.editMode) {
+      return;
+    }
+    if (event.type === "mousedown" && typeof window.PointerEvent === "function") {
+      return;
+    }
+
+    const target = resolveEventTargetElement(event.target);
+    if (!(target instanceof Element)) {
+      return;
+    }
+    if (!isInteractivePreviewElement(target)) {
+      return;
+    }
     if (shouldAllowNativeInteraction(event, target)) {
       return;
     }
@@ -566,32 +687,50 @@
   }
 
   function onDocumentDragOver(event) {
-    if (!state.pendingDragNodeTemplate) {
+    if (!state.editMode) {
+      clearDragDropIndicator();
       return;
     }
+    const dragTemplate = state.pendingDragNodeTemplate
+      || extractDragNodeTemplateFromDataTransfer(event.dataTransfer);
+    if (!dragTemplate) {
+      clearDragDropIndicator();
+      return;
+    }
+    state.pendingDragNodeTemplate = dragTemplate;
 
     hideInlineAddBar();
     hideQuickActionsToolbar({ preserveSelection: true });
     hidePreviewContextMenu();
-
-    const dropIntent = resolveDragDropIntent(event.target, event.clientX, event.clientY);
-    if (!dropIntent) {
-      clearDragDropIndicator();
-      return;
-    }
 
     event.preventDefault();
     event.stopPropagation();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = "copy";
     }
+    const dropIntent = resolveDragDropIntent(event.target, event.clientX, event.clientY)
+      || resolveFallbackDragDropIntent(event.clientX, event.clientY);
+    if (!dropIntent) {
+      clearDragDropIndicator();
+      return;
+    }
     updateDragDropIndicator(dropIntent, event.clientX, event.clientY);
   }
 
   function onDocumentDrop(event) {
-    if (!state.pendingDragNodeTemplate) {
+    if (!state.editMode) {
+      state.pendingDragNodeTemplate = null;
+      clearDragDropIndicator();
       return;
     }
+    const dragTemplate = state.pendingDragNodeTemplate
+      || extractDragNodeTemplateFromDataTransfer(event.dataTransfer);
+    if (!dragTemplate) {
+      state.pendingDragNodeTemplate = null;
+      clearDragDropIndicator();
+      return;
+    }
+    state.pendingDragNodeTemplate = dragTemplate;
 
     hideInlineAddBar();
     hideQuickActionsToolbar({ preserveSelection: true });
@@ -601,7 +740,8 @@
 
     const dropIntent = state.dropIndicator.visible
       ? buildDropIntentFromIndicatorState()
-      : resolveDragDropIntent(event.target, event.clientX, event.clientY);
+      : (resolveDragDropIntent(event.target, event.clientX, event.clientY)
+        || resolveFallbackDragDropIntent(event.clientX, event.clientY));
     const nodeTemplate = state.pendingDragNodeTemplate;
     state.pendingDragNodeTemplate = null;
     clearDragDropIndicator();
@@ -1388,6 +1528,9 @@
   }
 
   function applyInlineAddAction(rawType) {
+    if (!state.editMode) {
+      return;
+    }
     const type = String(rawType || "").trim().toLowerCase();
     if (!type || !state.inlineAdd.targetElement || !state.inlineAdd.placement) {
       return;
@@ -1933,6 +2076,9 @@
   }
 
   function executeQuickActionRequest(payload) {
+    if (!state.editMode) {
+      return false;
+    }
     const raw = payload && typeof payload === "object" ? payload : {};
     const action = String(raw.action || "").trim().toLowerCase();
     if (!action) {
@@ -2411,13 +2557,17 @@
     }
 
     if (message.type === "REL_SET_DRAG_COMPONENT") {
+      if (!state.editMode) {
+        return;
+      }
       hideInlineAddBar();
       hidePreviewContextMenu();
       hideQuickActionsToolbar({ preserveSelection: true });
       clearDragDropIndicator();
-      state.pendingDragNodeTemplate = message.payload && message.payload.nodeTemplate
-        ? message.payload.nodeTemplate
-        : null;
+      const payload = message.payload && typeof message.payload === "object"
+        ? message.payload
+        : {};
+      state.pendingDragNodeTemplate = sanitizeDragNodeTemplate(payload.nodeTemplate);
       return;
     }
 
@@ -2430,12 +2580,18 @@
     }
 
     if (message.type === "REL_QUICK_ACTION") {
+      if (!state.editMode) {
+        return;
+      }
       const payload = message.payload || {};
       executeQuickActionRequest(payload);
       return;
     }
 
     if (message.type === "REL_ADD_NODE") {
+      if (!state.editMode) {
+        return;
+      }
       const payload = message.payload || {};
       const selectAfterCreate = Object.prototype.hasOwnProperty.call(payload, "selectAfterCreate")
         ? Boolean(payload.selectAfterCreate)
@@ -2547,9 +2703,13 @@
   }
 
   function deleteNodeByReference(options) {
-    const relId = String(options.relId || "").trim();
-    const fallbackSelector = String(options.fallbackSelector || "").trim();
-    const silent = Boolean(options.silent);
+    const opts = options && typeof options === "object" ? options : {};
+    const silent = Boolean(opts.silent);
+    if (!state.editMode && !silent) {
+      return false;
+    }
+    const relId = String(opts.relId || "").trim();
+    const fallbackSelector = String(opts.fallbackSelector || "").trim();
 
     let element = relId ? findElementByRelIdOrFallback(relId, state.elementsMap) : null;
     if (!element && fallbackSelector) {
@@ -2617,6 +2777,9 @@
     const move = rawMove && typeof rawMove === "object" ? rawMove : {};
     const opts = options && typeof options === "object" ? options : {};
     const silent = Boolean(opts.silent);
+    if (!state.editMode && !silent) {
+      return false;
+    }
     const placement = normalizeMovePlacement(move.placement);
     const sourceRelId = String(move.sourceRelId || move.relId || "").trim();
     const targetRelId = String(move.targetRelId || "").trim();
@@ -3238,6 +3401,9 @@
   }
 
   function ensureAddedNode(nodeDescriptor, selectAfterCreate) {
+    if (!state.editMode && Boolean(selectAfterCreate)) {
+      return null;
+    }
     const node = normalizeNodeDescriptor(nodeDescriptor);
     if (!node) {
       return null;
@@ -4262,6 +4428,29 @@
     intent.pointerX = Number(clientX);
     intent.pointerY = Number(clientY);
     return intent;
+  }
+
+  function resolveFallbackDragDropIntent(clientX, clientY) {
+    const fallbackTarget = resolveRootDropContainer() || document.body;
+    if (!(fallbackTarget instanceof Element) || isEditorSystemElement(fallbackTarget)) {
+      return null;
+    }
+    const rect = fallbackTarget.getBoundingClientRect();
+    if (!Number.isFinite(rect.top) || rect.width < 0 || rect.height < 0) {
+      return null;
+    }
+    const targetRelId = ensureRelId(fallbackTarget);
+    const targetFallbackSelector = buildStableSelector(fallbackTarget);
+    return {
+      targetElement: fallbackTarget,
+      intent: "inside",
+      rect,
+      parentRelId: targetRelId,
+      targetRelId,
+      targetFallbackSelector,
+      pointerX: Number(clientX),
+      pointerY: Number(clientY),
+    };
   }
 
   function canContainChildren(element) {
